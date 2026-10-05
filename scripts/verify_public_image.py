@@ -34,7 +34,7 @@ def validate_manifest(manifest: dict, expected: dict[str, str]) -> None:
 def verify_public_image(reference: str, expected: dict[str, str], tagged_reference: str) -> None:
     """Use a clean Docker configuration, independent of registry login/helpers.
 
-    Pull by immutable index digest for each platform. A public manifest alone
+    Validate the immutable index, then pull each qualified platform digest. A public manifest alone
     is insufficient: layer access must also work without registry credentials.
     """
     image, separator, digest = reference.rpartition("@")
@@ -64,9 +64,11 @@ def verify_public_image(reference: str, expected: dict[str, str], tagged_referen
             check=True, capture_output=True, text=True, env=environment, timeout=120,
         )
         validate_manifest(json.loads(output.stdout), expected)
+        # Docker's classic image store cannot retain two platforms under one
+        # index digest. The index above binds these distinct child digests.
         for architecture in ("amd64", "arm64"):
             subprocess.run(
-                ["docker", "pull", "--platform", f"linux/{architecture}", reference],
+                ["docker", "pull", "--platform", f"linux/{architecture}", expected[architecture]],
                 check=True, env=environment, timeout=600,
             )
 

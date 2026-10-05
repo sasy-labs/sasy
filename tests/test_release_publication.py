@@ -52,8 +52,8 @@ def test_both_anonymous_architecture_pulls_are_required(monkeypatch):
     assert calls == [
         ["docker", "buildx", "imagetools", "inspect", "--format", "{{.Manifest.Digest}}", TAG],
         ["docker", "buildx", "imagetools", "inspect", "--raw", INDEX],
-        ["docker", "pull", "--platform", "linux/amd64", INDEX],
-        ["docker", "pull", "--platform", "linux/arm64", INDEX],
+        ["docker", "pull", "--platform", "linux/amd64", EXPECTED["amd64"]],
+        ["docker", "pull", "--platform", "linux/arm64", EXPECTED["arm64"]],
     ]
 
 

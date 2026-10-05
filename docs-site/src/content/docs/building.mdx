@@ -161,3 +161,12 @@ backends.
 
 For a deployment build, verify TLS, authentication, policy compilation, and
 an allowed and a denied action against the binary you will run.
+
+## Release image verification
+
+Release checks verify that the version tag resolves to the published image index
+and that it contains exactly the qualified AMD64 and ARM64 image digests. They
+then pull each platform digest anonymously with an empty Docker configuration.
+Using distinct platform digests avoids conflicts in Docker stores that cannot
+retain both platforms under a single index digest. These checks verify image
+access; they do not execute the images.
