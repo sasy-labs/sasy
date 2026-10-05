@@ -101,17 +101,21 @@ jobs:
         with:
           name: sasy-js-package
           path: artifacts
-      - name: Check npm supports trusted publishing
+      - name: Install npm with staged publishing support
+        run: npm install --global npm@11.21.0 --no-audit --no-fund
+      - name: Check npm supports staged publishing
         run: |
           node --input-type=module <<'JS'
           import assert from 'node:assert/strict';
           import { execFileSync } from 'node:child_process';
-          const [major, minor, patch] = execFileSync('npm', ['--version'], {encoding: 'utf8'}).trim().split('.').map(Number);
-          assert.ok(major > 11 || (major === 11 && (minor > 5 || (minor === 5 && patch >= 1))), 'npm >=11.5.1 is required');
+          const [major, minor] = execFileSync('npm', ['--version'], {encoding: 'utf8'}).trim().split('.').map(Number);
+          assert.ok(major > 11 || (major === 11 && minor >= 15), 'npm >=11.15.0 is required');
           JS
-      - name: Publish the tested tarball
+      - name: Stage the tested tarball for maintainer approval
         # npm obtains a short-lived OIDC identity; no registry token is stored.
         run: |
           set -- artifacts/sasy-js-*.tgz
           test "$#" -eq 1 && test -f "$1"
-          npm publish "$1" --access public --registry https://registry.npmjs.org
+          npm stage publish "$1" --access public --registry https://registry.npmjs.org
+
+          echo 'The package is staged. Review it on npm and approve with 2FA before installation is available.' >> "$GITHUB_STEP_SUMMARY"

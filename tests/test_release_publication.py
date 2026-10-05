@@ -179,3 +179,14 @@ def test_rehearsal_checks_the_selected_package(monkeypatch, image, endpoint, vis
         with pytest.raises(SystemExit, match='nonprivate package'):
             runpy.run_path(str(ROOT / 'scripts/check_rehearsal_registry.py'))
     assert calls == ['https://api.github.com/' + endpoint]
+
+
+def test_npm_release_stages_without_direct_publish():
+    workflow = yaml.safe_load((ROOT / '.github/workflows/sdk-js-release.yml').read_text())
+    steps = workflow['jobs']['publish']['steps']
+    commands = '\n'.join(step.get('run', '') for step in steps)
+    assert 'npm stage publish "$1"' in commands
+    assert 'npm publish "$1"' not in commands
+    assert 'npm dist-tag' not in commands
+    assert 'npm >=11.15.0 is required' in commands
+    assert 'GITHUB_STEP_SUMMARY' in commands
