@@ -10,8 +10,14 @@ code dispatches a tool, and run the tool only if the decision is authorized. It
 needs a running SASY engine ([start a local engine](https://docs.sasy.ai/local-engine/)).
 Node.js 20 or newer.
 
-`sasy-js` is not yet published to npm. Build it from a checkout of the
-repository, from the root, with Node.js, npm and `protoc`:
+Install from npm:
+
+```bash
+npm install sasy-js
+```
+
+To build from a checkout of the repository, run these commands from the root
+with Node.js, npm and `protoc`:
 
 ```bash
 npm ci --ignore-scripts --no-audit --no-fund
