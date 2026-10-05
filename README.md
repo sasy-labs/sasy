@@ -9,8 +9,8 @@
 
 <p align="center">
   <a href="https://docs.sasy.ai/"><img src="https://img.shields.io/badge/docs-docs.sasy.ai-6366f1" alt="Docs"></a>
-  <a href="https://pypi.org/project/sasy/"><img src="https://img.shields.io/pypi/v/sasy" alt="PyPI version"></a>
-  <a href="https://github.com/nilspalumbo/sasy-test/actions/workflows/ci-core.yml"><img src="https://github.com/nilspalumbo/sasy-test/actions/workflows/ci-core.yml/badge.svg?branch=main" alt="Tests"></a>
+  <a href="https://pypi.org/project/sasy/"><img src="https://img.shields.io/pypi/v/sasy?cacheSeconds=300" alt="PyPI version"></a>
+  <a href="https://github.com/sasy-labs/sasy/actions/workflows/ci-core.yml"><img src="https://github.com/sasy-labs/sasy/actions/workflows/ci-core.yml/badge.svg?branch=main" alt="Tests"></a>
   <a href="https://arxiv.org/abs/2602.16708"><img src="https://img.shields.io/badge/arXiv-2602.16708-b31b1b" alt="Paper"></a>
 </p>
 
