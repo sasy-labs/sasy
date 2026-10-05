@@ -10,6 +10,7 @@
 <p align="center">
   <a href="https://docs.sasy.ai/"><img src="https://img.shields.io/badge/docs-docs.sasy.ai-6366f1" alt="Docs"></a>
   <a href="https://pypi.org/project/sasy/"><img src="https://img.shields.io/pypi/v/sasy?cacheSeconds=300" alt="PyPI version"></a>
+  <a href="https://www.npmjs.com/package/sasy-js"><img src="https://img.shields.io/npm/v/sasy-js?cacheSeconds=300" alt="npm version"></a>
   <a href="https://github.com/sasy-labs/sasy/actions/workflows/ci.yml"><img src="https://github.com/sasy-labs/sasy/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI"></a>
   <a href="https://arxiv.org/abs/2602.16708"><img src="https://img.shields.io/badge/arXiv-2602.16708-b31b1b" alt="Paper"></a>
 </p>
