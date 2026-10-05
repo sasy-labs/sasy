@@ -170,3 +170,13 @@ then pull each platform digest anonymously with an empty Docker configuration.
 Using distinct platform digests avoids conflicts in Docker stores that cannot
 retain both platforms under a single index digest. These checks verify image
 access; they do not execute the images.
+
+If image publication succeeds but anonymous verification fails, the Python SDK
+release workflow can recover the existing release. Dispatch it from `main` with
+`recovery_run` set to the original release run ID. It requires successful original
+core, package and native-image checks, a successful image publication receipt,
+the unchanged version tag, and retained artifacts. It verifies the published
+image using the current checker, then publishes the original Python package
+artifacts through the `pypi` environment. It does not rebuild the engine or SDK,
+replace the image, or move the release tag. Expired artifacts or failed original
+qualification gates cannot be recovered this way.

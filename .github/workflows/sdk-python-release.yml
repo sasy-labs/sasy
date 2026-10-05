@@ -8,17 +8,22 @@ on:
   pull_request:
     branches: [main, 'release/**']
   workflow_dispatch:
+    inputs:
+      recovery_run:
+        description: Existing qualified release run to recover without rebuilding (blank validates a new build)
+        type: string
+        default: ''
 
 permissions: {}
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ inputs.recovery_run || github.ref }}
   cancel-in-progress: false
 
 jobs:
   core:
     # Branch/PR pushes run ci-core separately; tag releases gate inside engine.
-    if: github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'workflow_dispatch' && inputs.recovery_run == ''
     uses: ./.github/workflows/ci-core.yml
     permissions:
       contents: read
@@ -31,7 +36,7 @@ jobs:
       packages: write
 
   build:
-    if: ${{ !cancelled() && (needs.core.result == 'success' || needs.core.result == 'skipped') }}
+    if: ${{ !cancelled() && (github.event_name != 'workflow_dispatch' || inputs.recovery_run == '') && (needs.core.result == 'success' || needs.core.result == 'skipped') }}
     needs: core
     runs-on: ubuntu-latest
     permissions:
@@ -94,4 +99,70 @@ jobs:
         with:
           name: sasy-python-package
           path: dist
+      - uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # release/v1
+
+  recover_image:
+    if: github.event_name == 'workflow_dispatch' && inputs.recovery_run != '' && github.ref == 'refs/heads/main' && github.repository_id == '1405994907' && !github.event.repository.private
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      version: ${{ steps.source.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+      - name: Require successful original release gates and retained artifacts
+        id: source
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_RUN: ${{ inputs.recovery_run }}
+        run: python scripts/prepare_release_recovery.py "$RELEASE_RUN"
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ steps.source.outputs.sha }}
+          path: release-source
+          persist-credentials: false
+      - name: Validate original source versions
+        env:
+          RELEASE_TAG: ${{ steps.source.outputs.tag }}
+        run: python scripts/check_release_version.py "$RELEASE_TAG" --root release-source
+      - uses: actions/download-artifact@v7
+        with:
+          pattern: engine-image-*
+          path: image-refs
+          merge-multiple: true
+          run-id: ${{ inputs.recovery_run }}
+          github-token: ${{ github.token }}
+      - name: Verify the existing image anonymously with the corrected checker
+        env:
+          VERSION: ${{ steps.source.outputs.version }}
+          DIGEST: ${{ steps.source.outputs.digest }}
+        run: |
+          python scripts/verify_public_image.py "ghcr.io/sasy-labs/sasy@$DIGEST" \
+            --tagged-reference "ghcr.io/sasy-labs/sasy:$VERSION" \
+            --amd64 "$(cat image-refs/sasy-linux-amd64.image)" \
+            --arm64 "$(cat image-refs/sasy-linux-arm64.image)"
+
+  publish_recovered:
+    needs: recover_image
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/sasy/
+    permissions:
+      actions: read
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v7
+        with:
+          name: sasy-python-package
+          path: dist
+          run-id: ${{ inputs.recovery_run }}
+          github-token: ${{ github.token }}
       - uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # release/v1
