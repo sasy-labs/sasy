@@ -170,7 +170,7 @@ rules over facts and relationships. Policies can express, for example:
 
 ## Develop SASY
 
-To change SASY itself, clone this repository. `make docker-build` builds the engine
+`make docker-build` builds the engine
 image from source; `uv run sasy engine stop`, then
 `uv run sasy engine start --image sasy`, runs that build.
 [Build from source](https://docs.sasy.ai/building/) covers Nix and native

@@ -1,4 +1,4 @@
-name: Build and deploy public docs
+name: Build and deploy docs
 
 on:
   push:
@@ -73,7 +73,7 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     environment:
-      name: public-docs
+      name: docs
       url: https://docs.sasy.ai
     permissions:
       contents: read
