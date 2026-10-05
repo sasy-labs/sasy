@@ -1,0 +1,163 @@
+name: Core release gate
+
+on:
+  push:
+    branches: [main, 'release/**']
+  pull_request:
+    branches: [main, 'release/**']
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: core-release-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  core:
+    # One Linux debug build, shared with the Rust and SDK tests.
+    # No release optimization, platform matrix, private demos or FlowLog build.
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+    env:
+      CARGO_BUILD_JOBS: '2'
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      CARGO_PROFILE_TEST_DEBUG: '0'
+      SASY_REQUIRE_FRAMEWORKS: '1'
+    steps:
+      - uses: actions/checkout@v7
+      - name: Decide whether the engine lanes must run
+        id: scope
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          # Only a pull request that changes documentation alone skips the
+          # engine lanes. Pushes, manual runs and release gates (workflow_call)
+          # always run everything, as does any failure to list the changes.
+          # The checkout is the PR's merge commit, so diffing it against the
+          # base lists the PR's changes using only contents: read.
+          full=true
+          if [ "$EVENT" = pull_request ] &&
+             git fetch --quiet --no-tags --depth=1 origin "$BASE" &&
+             files=$(git diff --no-renames --name-only "$BASE" HEAD) &&
+             python3 scripts/ci_docs_only.py <<< "$files"; then
+            full=false
+          fi
+          echo "full=$full" >> "$GITHUB_OUTPUT"
+      - name: Validate GitHub Actions workflows
+        run: |
+          go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+          "$(go env GOPATH)/bin/actionlint" -shellcheck= -pyflakes=
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+        if: steps.scope.outputs.full == 'true'
+        with:
+          # Match the qualified Nix toolchain so lint changes are reviewed upgrades.
+          toolchain: '1.95.0'
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
+        if: steps.scope.outputs.full == 'true'
+        with:
+          workspaces: .
+          key: core-debug
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+      - uses: actions/setup-node@v6
+        if: steps.scope.outputs.full == 'true'
+        with:
+          node-version: '22'
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        if: steps.scope.outputs.full == 'true'
+        with:
+          bun-version: '1.3.11'
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+      - uses: arduino/setup-protoc@v3
+        if: steps.scope.outputs.full == 'true'
+        with:
+          version: '27.x'
+          repo-token: ${{ github.token }}
+      - name: Install policy toolchain
+        if: steps.scope.outputs.full == 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libclang-dev g++ mcpp bubblewrap
+          curl --fail --location --retry 3 https://github.com/souffle-lang/souffle/releases/download/2.5/x86_64-ubuntu-2204-souffle-2.5-Linux.deb -o /tmp/souffle.deb
+          sudo apt-get install -y /tmp/souffle.deb
+      - name: Core SDK installs without agent frameworks
+        run: |
+          uv venv "${RUNNER_TEMP}/sasy-core-sdk"
+          uv pip install --python "${RUNNER_TEMP}/sasy-core-sdk/bin/python" -e sdk/python
+          "${RUNNER_TEMP}/sasy-core-sdk/bin/python" -c 'import sasy, importlib.util; assert importlib.util.find_spec("langroid") is None; assert importlib.util.find_spec("langchain") is None'
+      - name: Install Python SDK and test tools only
+        run: |
+          uv venv .venv
+          uv pip install --python .venv/bin/python -e 'sdk/python[langroid,langchain,adk]' 'langroid==0.67.8' pytest pytest-asyncio pytest-timeout 'langchain-openai==1.6.2' 'sqlalchemy[asyncio]>=2,<3'
+      - name: Committed gRPC stubs match the proto files
+        run: |
+          uv pip install --python .venv/bin/python 'grpcio-tools==1.80.0'
+          PYTHON=.venv/bin/python scripts/generate_proto.sh
+          git diff --exit-code -- sdk/python/sasy/proto
+      - name: Rust lint
+        if: steps.scope.outputs.full == 'true'
+        run: make lint-rust
+      - name: Rust unit tests and engine build
+        if: steps.scope.outputs.full == 'true'
+        working-directory: .
+        run: |
+          cargo test --locked -p sasy-common -p sasy-redaction -p sasy-auth -p sasy-credential -p sasy-graph -p sasy-server -p sasy-refmon -p sasy-policy-analysis -p sasy-policy -p sasy-binary
+          cargo build --locked -p sasy-binary --bin sasy
+      - name: Required policy metadata and Linux sandbox probes
+        if: steps.scope.outputs.full == 'true'
+        working-directory: .
+        run: |
+          cargo test --locked -p sasy-policy --lib action_metadata_seeds_per_query_edb -- --ignored --nocapture
+          for probe in a_constructor_cannot_reach_a_denied_syscall_when_bwrap_filters_before_exec the_child_is_told_whether_bwrap_installed_the_filter_before_exec runtime_asset_binds_stay_read_only_and_survive_restart; do
+            cargo test --locked -p sasy-policy --lib "$probe" -- --ignored --nocapture 2>&1 | tee "${RUNNER_TEMP}/${probe}.log"
+            # These opt-in probes report unavailable prerequisites themselves.
+            # Such a return must not masquerade as Linux runtime acceptance.
+            if grep -q 'skipped:' "${RUNNER_TEMP}/${probe}.log"; then exit 1; fi
+            grep -q '1 passed; 0 failed; 0 ignored' "${RUNNER_TEMP}/${probe}.log"
+          done
+      - name: Required compiled and interpreted policy inference differentials
+        if: steps.scope.outputs.full == 'true'
+        run: |
+          bash souffle/build-test-runtime.sh
+          bash souffle/test_interpreted_output_parser.sh
+          cargo test --locked --manifest-path Cargo.toml -p sasy-policy --lib compiler::tests::inference_tests -- --ignored --nocapture 2>&1 | tee "${RUNNER_TEMP}/inference-differentials.log"
+          grep -q '4 passed; 0 failed; 0 ignored' "${RUNNER_TEMP}/inference-differentials.log"
+      - name: Record engine under test
+        if: steps.scope.outputs.full == 'true'
+        run: |
+          git rev-parse HEAD
+          sha256sum target/debug/sasy
+          echo "SASY_BIN=$GITHUB_WORKSPACE/target/debug/sasy" >> "$GITHUB_ENV"
+      - name: Python SDK and release helper tests
+        run: .venv/bin/python -m pytest -q
+      - name: Required policy harness round trip
+        if: steps.scope.outputs.full == 'true'
+        run: .venv/bin/python -m pytest -q --run-toolchain -m toolchain
+      - name: Owned-engine Python integration tests
+        if: steps.scope.outputs.full == 'true'
+        env:
+          SASY_REQUIRE_SANDBOX: '1'
+        run: SASY_TEST_ENGINE="$SASY_BIN" .venv/bin/python -m pytest -q --run-integration -m integration
+      - name: Core Python lint
+        run: |
+          uv pip install --python .venv/bin/python 'ruff==0.16.6'
+          .venv/bin/ruff check sdk/python
+          if [ -d packages/sasty ]; then .venv/bin/ruff check packages/sasty; fi
+      - name: Python SDK type check
+        run: |
+          uv pip install --python .venv/bin/python --group typing
+          .venv/bin/python -m mypy sdk/python/sasy
+      - name: TypeScript SDK build and tests
+        if: steps.scope.outputs.full == 'true'
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          npm run build:sdk
+          npm run typecheck --workspace=sasy-js
+          npm run lint --workspace=sasy-js
+          npm test --workspace=sasy-js

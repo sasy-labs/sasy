@@ -1,0 +1,15 @@
+{
+  "name": "sasy-source",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Source workspace for the SASY TypeScript SDK",
+  "workspaces": [
+    "sdk/typescript"
+  ],
+  "scripts": {
+    "build:sdk": "npm run build --workspace=sasy-js"
+  },
+  "engines": {
+    "node": ">=20.19.0"
+  }
+}

@@ -1,0 +1,226 @@
+---
+title: Examples
+description: Run policies on LangChain, Google ADK, and Langroid agents.
+---
+
+import { Card, CardGrid } from '@astrojs/starlight/components';
+
+<style>{`
+  .card-grid > .card { min-width: 0; padding: 1rem; }
+  .card-grid .body { min-width: 0; }
+  @media (max-width: 59.999rem) {
+    .card-grid { grid-template-columns: 100%; }
+  }
+  @media (min-width: 60rem) {
+    .card-grid { grid-template-columns: minmax(0, 2fr) minmax(0, 3fr); }
+  }
+`}</style>
+
+These examples use real framework execution and SASY enforcement, with scripted
+models and simulated effects. No model-provider key is required.
+With the [quick-start engine](/get-started/) running, run the commands below
+from the repository root in another terminal.
+
+## LangChain: information flow
+
+An agent reads a document, passes it through a drafting tool, and asks a
+publication tool to send the rewritten draft to an internal or external destination.
+
+<CardGrid>
+<Card title="Policy">
+
+Allow internal publication. Allow external publication only when no confidential
+information influenced it.
+
+</Card>
+<Card title="Datalog excerpt">
+
+```prolog wrap
+.decl ConfidentialInput()
+ConfidentialInput() :-
+    CurrentDepends(id),
+    ToolResult(id, "read_confidential", _).
+
+Unauthorized(idx) :-
+    Actions(idx, a),
+    IsTool(a, "publish"),
+    a = $CallTool(_, args),
+    @json_get_str(args, "destination") = "external",
+    ConfidentialInput().
+```
+
+</Card>
+</CardGrid>
+
+`CurrentDepends` follows the inputs behind the publication request. The
+[full policy](https://github.com/sasy-labs/sasy/blob/main/examples/langchain-information-flow/policy.dl)
+also defines the allowed actions.
+
+```bash
+# Denied: confidential input, external destination
+uv run examples/langchain-information-flow/demo.py
+# Allowed: keep confidential input internal
+uv run examples/langchain-information-flow/demo.py --destination internal
+# Allowed: publish a summary based only on public input
+uv run examples/langchain-information-flow/demo.py --public
+```
+
+The default run is denied before the publication handler runs, leaving
+`simulated_deliveries` empty. The internal and public-input runs each make one
+simulated delivery.
+
+The [LangChain guide](/integrations/langchain/#information-flow-example) explains
+the policy and includes a [supervisor with parallel workers](/integrations/langchain/#run-a-supervisor-with-parallel-workers).
+See the [example README](https://github.com/sasy-labs/sasy/tree/main/examples/langchain-information-flow)
+for more scenarios and live-model execution.
+
+## Google ADK: payment approval
+
+A requester submits a payment, a reviewer approves it, and a payer tries to
+add it to an in-memory ledger. The agents pass their results through a serial
+ADK workflow.
+
+<CardGrid>
+<Card title="Policy">
+
+A payment is only allowed when it exactly matches a prior request which has
+been approved by a reviewer.
+
+</Card>
+<Card title="Datalog excerpt">
+
+```prolog wrap
+IsAuthorized(idx) :-
+    Actions(idx, a),
+    a = $CallTool("disburse_payment", args),
+    ApprovedPayment(
+        @json_get_str(args, "request_id"),
+        @json_get_str(args, "payee"),
+        @json_get_str(args, "amount")).
+```
+
+`ApprovedPayment` joins successful request and approval tool results in
+`CurrentDepends`, checks their agent labels, and matches all three fields.
+See its definition in the
+[full policy](https://github.com/sasy-labs/sasy/blob/main/examples/adk-separation-of-duties/payment_policy.dl).
+
+</Card>
+</CardGrid>
+
+```bash
+# Allowed: the request, approval, and payment match
+uv run examples/adk-separation-of-duties/main.py
+# Denied: the payer names a different payee
+uv run examples/adk-separation-of-duties/main.py --scenario wrong-payee
+```
+
+The default run records one payment under `dispatched`. The wrong-payee run is
+denied and leaves the ledger empty.
+
+See the [example README](https://github.com/sasy-labs/sasy/tree/main/examples/adk-separation-of-duties)
+for the policy and other scenarios, and the [ADK guide](/integrations/google-adk/)
+for supported configurations.
+
+## Langroid: information flow across a team
+
+The `research` and `records` agents read documents and pass summaries to `main`,
+which can send simulated email but cannot read the documents itself. An inbox
+document contains an injected instruction to forward a confidential merger plan
+to an external auditor. Run the same team under two policies.
+
+### MLS
+
+<CardGrid>
+<Card title="Policy">
+
+Readers must be cleared for the documents they open. Email recipients must be
+cleared for every document that influenced the send.
+
+</Card>
+<Card title="Datalog excerpt">
+
+```prolog wrap
+Unauthorized(idx) :-
+    Actions(idx, a),
+    IsTool(a, "send_email"),
+    a = $CallTool(_, args),
+    to = @json_get_str(args, "to"),
+    Clearance(to, clearance),
+    ReadInDeps(path),
+    FileLevel(path, level),
+    level > clearance.
+```
+
+</Card>
+</CardGrid>
+
+### Toxic flow
+
+<CardGrid>
+<Card title="Policy">
+
+Allow reads and internal sends. Deny an external send when both an untrusted
+and a confidential document influenced it. Confidential input alone does not
+trigger this denial.
+
+</Card>
+<Card title="Datalog excerpt">
+
+```prolog wrap
+Unauthorized(idx) :-
+    Actions(idx, a),
+    IsTool(a, "send_email"),
+    a = $CallTool(_, args),
+    to = @json_get_str(args, "to"),
+    !Internal(to),
+    UntrustedInDeps(),
+    ConfidentialInDeps().
+```
+
+</Card>
+</CardGrid>
+
+`ReadInDeps` finds document reads in `CurrentDepends`; `UntrustedInDeps` and
+`ConfidentialInDeps` classify those reads. The full
+[MLS policy](https://github.com/sasy-labs/sasy/blob/main/examples/langroid-information-flow/mls_policy.dl)
+and [toxic-flow policy](https://github.com/sasy-labs/sasy/blob/main/examples/langroid-information-flow/toxic_flow_policy.dl)
+define these helpers, document levels, clearances, and allowed actions.
+
+```bash
+# Enforce document and recipient clearances
+uv run examples/langroid-information-flow/demo.py --policy mls
+# Block external sends combining untrusted and confidential input
+uv run examples/langroid-information-flow/demo.py --policy toxic-flow
+```
+
+Both deny the injected request to send a confidential merger plan to an external
+auditor. A user-requested send of the plan to an uncleared partner is denied by
+MLS but allowed by toxic flow when no untrusted input influenced it.
+
+See the [example README](https://github.com/sasy-labs/sasy/tree/main/examples/langroid-information-flow)
+for the policies and concurrent scenarios, and the [Langroid guide](/integrations/langroid/)
+for supported configurations.
+
+## Run with a real model
+
+Set the provider credentials in the repository-root `.env`: `OPENAI_API_KEY`
+for LangChain and Langroid, or `GOOGLE_API_KEY` for ADK. Add `--live` to use a
+real model; Langroid also requires `--model`:
+
+```bash
+# LangChain: use the live model instead of the scripted model
+uv run examples/langchain-information-flow/demo.py --live
+# ADK: use Gemini for the same payment workflow
+uv run examples/adk-separation-of-duties/main.py --live
+# Langroid: choose an OpenAI model and enforce the MLS policy
+uv run examples/langroid-information-flow/demo.py --policy mls --live --model gpt-4.1-mini
+```
+
+SASY still enforces the selected policy before tools execute. Live runs make
+paid provider requests; documents, payments, and deliveries remain simulated.
+The model may choose different actions, so inspect the tool decisions rather
+than expecting the scripted results.
+
+These examples bind their policies per session. SASY can concurrently enforce
+different policies for multiple agents on the same engine without restarting it.
+To integrate your own agents, see [SDK usage patterns](/sdk/).

@@ -1,0 +1,28 @@
+---
+title: SASY
+description: Enforce authorization rules on agentic systems using the history and inputs behind their actions.
+template: splash
+hero:
+  tagline: Policy enforcement for AI agents. Every tool call is checked against your Datalog policy and the history that led to it, before it runs.
+  actions:
+    - text: Get started
+      link: /get-started/
+      icon: right-arrow
+    - text: View on GitHub
+      link: https://github.com/sasy-labs/sasy
+      icon: github
+      variant: minimal
+---
+
+import SystemArchitecture from '../../components/SystemArchitecture.astro';
+
+Your agent records each message and tool result in a dependency graph, and asks
+the SASY engine about each proposed tool call before it runs; the engine allows it
+or returns the denial reason to the agent. For LangChain, Google ADK and Langroid,
+`sasy.instrument()` does this automatically. Any other agent makes the same two
+calls with SASY's primitives: `sasy.record` for each message and
+`sasy.check_tool_call` before each tool runs. Policies can follow influence through
+summaries, tools and interactions between agents, so you can control information
+flow, require approvals and enforce business rules outside the model.
+
+<SystemArchitecture />

@@ -1,0 +1,92 @@
+---
+import { frame, graphMarkup, graphStyles, lastStep, variants } from './action-graph.mjs';
+---
+<figure data-comparison class="comparison" aria-label="Compare the two arrival orders">
+  <p class="full-size"><a href="/diagrams/information-flow.svg">Open the side-by-side comparison</a></p>
+  <div class="view-tabs" data-view-tabs hidden role="tablist" aria-label="Choose a send outcome">
+    {variants.map((variant, i) => <button type="button" role="tab" data-view={variant.id} id={`view-${variant.id}`} aria-controls={`panel-${variant.id}`} aria-selected={i === 0 ? 'true' : 'false'} tabindex={i === 0 ? 0 : -1}>{variant.id === 'allowed' ? 'Allowed send' : 'Blocked send'}</button>)}
+  </div>
+  <div class="variants">
+    {variants.map(variant => {
+      const complete = frame(lastStep, variant.id);
+      return <section id={`panel-${variant.id}`} role="tabpanel" aria-labelledby={`view-${variant.id}`} class="variant" data-action-graph data-variant={variant.id} data-decision={complete.decision} aria-label={variant.title}>
+        <div class="heading">
+          <h4>{variant.title}</h4>
+          <p class="outcome">{variant.outcome}</p>
+        </div>
+        <div class="controls" data-controls hidden role="group" aria-label={`${variant.title}: playback`}>
+          <button type="button" data-replay>Replay</button>
+          <button type="button" data-previous>Back</button>
+          <button type="button" data-next disabled>Next</button>
+          <span data-progress>Step {lastStep + 1} of {lastStep + 1}</span>
+        </div>
+        <div class="explanation">
+          <p class="focus" data-focus>Policy decision · {complete.target.label}</p>
+          <p data-status role="status" aria-live="polite">{complete.message}</p>
+        </div>
+        <div class="graph-scroll" role="region" aria-label={`${variant.title}: dependency graph`} tabindex="0">
+          <svg class="flow-graph" viewBox="0 0 600 910" role="group" aria-label="Select a tool action to inspect its ancestors.">
+            <title>{variant.title}</title>
+            <style set:html={graphStyles} />
+            <g data-marks set:html={graphMarkup(complete)} />
+          </svg>
+        </div>
+      </section>;
+    })}
+  </div>
+  <div class="legend" aria-label="Graph legend">
+    <span><b class="chip untrusted">U</b><i class="border untrusted" aria-hidden="true"></i> Untrusted</span>
+    <span><b class="chip sensitive">S</b><i class="border sensitive" aria-hidden="true"></i> Sensitive</span>
+    <span><i class="ancestors" aria-hidden="true"></i> Ancestors</span>
+    <span><i class="shape circle" aria-hidden="true"></i> LLM call</span>
+    <span><i class="shape action" aria-hidden="true"></i> Tool action</span>
+    <span><i class="shape result" aria-hidden="true"></i> Input / result</span>
+  </div>
+  <figcaption>Influence follows the arrows. Borders show inherited U/S labels; dotted outlines mark the selected action’s ancestors, including untainted inputs. These are illustrative variants of the example policy.</figcaption>
+</figure>
+<script>
+  import { mountActionGraph, mountVariantTabs } from './action-graph.mjs';
+  document.querySelectorAll('[data-comparison]').forEach(root => {
+    root.querySelectorAll('[data-action-graph]').forEach(mountActionGraph);
+    mountVariantTabs(root);
+  });
+</script>
+<style>
+  .comparison { --u:#315bb5; --s:#975b06; --trace:#7854b1; margin:1.2rem 0; }
+  :global([data-theme='dark']) .comparison { --u:#9dbfff; --s:#f7ca7e; --trace:#c5abf0; }
+  .full-size { font-size:.8rem; margin-bottom:.6rem !important; }
+  .variants { display:grid; grid-template-columns:1fr; gap:.75rem; }
+  .variant { margin-block:0; min-width:0; border:1px solid var(--sl-color-gray-5); border-radius:10px; overflow:hidden; }
+  .comparison :is(p,div,span,button,svg) { margin-block:0; }
+  .heading { padding:.8rem .8rem .4rem; min-height:5rem; }
+  h4 { margin:0; font-size:1rem; line-height:1.4; }
+  .outcome { margin-top:.3rem !important; font-size:.8rem; font-weight:650; }
+  [data-variant='allowed'] .outcome { color:#17613c; }
+  [data-variant='blocked'] .outcome { color:#b02b35; }
+  :global([data-theme='dark']) [data-variant='allowed'] .outcome { color:#8de0b1; }
+  :global([data-theme='dark']) [data-variant='blocked'] .outcome { color:#ffa5a8; }
+  .controls[hidden],.view-tabs[hidden],.variant[hidden] { display:none; }
+  .view-tabs { display:flex; flex-wrap:wrap; gap:.5rem; margin-bottom:.65rem !important; }
+  [role="tab"][aria-selected="true"] { border-color:var(--trace); box-shadow:inset 0 0 0 1px var(--trace); }
+  .controls { display:flex; flex-wrap:wrap; align-items:center; gap:.3rem; padding:.4rem .8rem .6rem; }
+  button { font:inherit; font-size:.75rem; font-weight:600; cursor:pointer; border:1px solid var(--sl-color-gray-4); border-radius:5px; padding:.35rem .5rem; min-height:2.75rem; color:var(--sl-color-text); background:var(--sl-color-bg); }
+  button:hover:not(:disabled) { border-color:var(--sl-color-text-accent); }
+  button:focus-visible,.graph-scroll:focus-visible { outline:3px solid var(--sl-color-text-accent); outline-offset:-3px; }
+  button:disabled { opacity:.5; cursor:default; }
+  [data-progress] { font-size:.7rem; color:var(--sl-color-gray-2); white-space:nowrap; }
+  .explanation { padding:.65rem .8rem; background:var(--sl-color-gray-6); min-height:6rem; }
+  .focus { font-size:.65rem; text-transform:uppercase; font-weight:650; }
+  [data-status] { margin-top:.3rem !important; font-size:.8rem; line-height:1.45; }
+  .graph-scroll { overflow-x:auto; padding:.5rem 0; }
+  svg { display:block; width:100%; max-width:400px; min-width:320px; height:auto; margin:0 auto; }
+  .legend { display:flex; flex-wrap:wrap; gap:.6rem 1rem; padding:.9rem 0 .5rem; color:var(--sl-color-gray-2); font-size:.78rem; }
+  .legend > span { display:inline-flex; align-items:center; gap:.35rem; }
+  .chip,.border,.ancestors { display:inline-grid; place-items:center; width:1.35rem; height:1.35rem; border:2px solid currentColor; border-radius:50%; }
+  .chip { font-size:.75rem; }
+  .untrusted { color:var(--u); } .sensitive { color:var(--s); }
+  .ancestors { border:1.5px dashed var(--trace); }
+  .shape { display:inline-block; width:1.15rem; height:.95rem; border:1.5px solid currentColor; }
+  .shape.circle { width:1.1rem; height:1.1rem; border-radius:50%; }
+  .shape.action { border-radius:2px; } .shape.result { border-radius:8px; }
+  figcaption { color:var(--sl-color-gray-2); font-size:.8rem; line-height:1.5; }
+</style>

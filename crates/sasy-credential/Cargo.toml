@@ -1,0 +1,42 @@
+[package]
+name = "sasy-credential"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Credential storage and lookup backends"
+
+[lib]
+name = "sasy_credential"
+
+[dependencies]
+libc = { workspace = true }
+sasy-common = { workspace = true }
+sasy-auth = { workspace = true }
+tonic = { workspace = true }
+tokio = { workspace = true }
+rusqlite = { workspace = true }
+serde = { workspace = true }
+tracing = { workspace = true }
+thiserror = { workspace = true }
+parking_lot = { workspace = true }
+reqwest = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
+url = { workspace = true, optional = true }
+
+[features]
+# The OpenBao backend (openbao.rs) and the HTTP client it needs. On by
+# default, so the full binary can select `--credential-backend openbao`; a
+# build that never will can drop it with --no-default-features.
+default = ["openbao"]
+openbao = ["dep:reqwest", "dep:serde_json", "dep:url"]
+
+[dev-dependencies]
+tempfile = "3"
+# A fake OpenBao server for the backend's tests: the real client is exercised
+# over a real socket rather than against a mock of reqwest.
+hyper = { workspace = true }
+hyper-util = { workspace = true }
+http-body-util = { workspace = true }
+serde_json = { workspace = true }

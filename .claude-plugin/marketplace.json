@@ -1,0 +1,21 @@
+{
+  "name": "sasy",
+  "owner": {
+    "name": "Sasy, Inc."
+  },
+  "metadata": {
+    "description": "Skills for coding agents that set up SASY, protect agents with it, and write or explain its policies"
+  },
+  "plugins": [
+    {
+      "name": "sasy",
+      "source": "./plugins/sasy",
+      "description": "Set up SASY, protect agents with it (LangChain, Google ADK, Langroid or your own loop), and explain why an action was blocked"
+    },
+    {
+      "name": "policy-compiler",
+      "source": "./plugins/policy-compiler",
+      "description": "Read and write SASY Datalog policies against the public schema and validator"
+    }
+  ]
+}

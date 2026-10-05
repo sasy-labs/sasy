@@ -1,0 +1,116 @@
+---
+title: SDK usage patterns
+description: Connect an agent to SASY, enable a framework adapter, and bind a policy to a session.
+---
+
+Install the SDK and start the engine as shown in the
+[quick start](/get-started/). `sasy engine start` saves a selected client
+profile in `~/.sasy`; the Python SDK uses it across project directories unless
+you configure another endpoint.
+
+The common pattern is to call `sasy.instrument()` once at startup, then run an
+agent inside `sasy.session(policy=Path("policy.dl"))`. A session is SASY's
+enforcement context, binding an agent's execution trace to a policy.
+Pass a `Path` for a policy
+file; a plain string is treated as policy source. The engine compiles and
+validates the policy when the session starts.
+
+By default, automatic instrumentation is active only within a session context
+manager. See [configuration options](/configuration/#session-lifetime-and-background-work)
+to enable process-wide instrumentation, and [client configuration](/configuration/#python-client-and-session-policy)
+to set an explicit endpoint or other options with `sasy.configure(...)`.
+
+Sessions are independent; to express policies that take the traces of multiple
+interacting agents into account, run them in the same session.
+
+## LangChain
+
+Call `sasy.instrument()` before building an agent with `create_agent`, using
+your application's LangChain `model` and `tools`. The adapter records model
+messages and checks tool calls before dispatch:
+
+```python
+from pathlib import Path
+import sasy
+from langchain.agents import create_agent
+
+sasy.instrument()
+agent = create_agent(model, tools)
+with sasy.session(policy=Path("policy.dl")):
+    result = agent.invoke({"messages": [{"role": "user", "content": "Your task"}]})
+```
+
+Run the
+[LangChain example](/examples/#langchain-information-flow) for a complete scripted example, then
+see the [LangChain guide](/integrations/langchain/) for supported compositions.
+
+## Google ADK
+
+Instrument your ADK `Runner` and execute it within a SASY session:
+
+```python
+from pathlib import Path
+import sasy
+
+sasy.instrument()
+with sasy.session(policy=Path("policy.dl")):
+    async for event in runner.run_async(
+        user_id=user_id,
+        session_id=adk_session_id,
+        new_message=user_content,
+    ):
+        show(event)
+```
+
+The
+[ADK example](https://github.com/sasy-labs/sasy/tree/main/examples/adk-separation-of-duties)
+is runnable; the [ADK guide](/integrations/google-adk/) describes supported
+runner and agent paths.
+
+## Langroid
+
+Instrument your configured Langroid `task` and execute it within a SASY session:
+
+```python
+from pathlib import Path
+import sasy
+
+sasy.instrument()
+with sasy.session(policy=Path("policy.dl")):
+    result = task.run("Your task")
+```
+
+See the
+[Langroid example](https://github.com/sasy-labs/sasy/tree/main/examples/langroid-information-flow)
+and [Langroid guide](/integrations/langroid/) for team handoffs and supported
+tool behavior.
+
+## Your own agent loop
+
+Record messages and dependencies produced by your system, and check the
+authorization of actions before they execute:
+
+```python
+import json
+from pathlib import Path
+import sasy
+
+with sasy.session(policy=Path("policy.dl")):
+    task = sasy.record("Summarize the report and email the team", role="user")
+    report = sasy.record(report_text, result_of=("read_document", {"name": "report"}))
+    request = sasy.record(model_reply, role="llm", inputs=[task, report],
+                          tool_calls=[("send_email", args)])
+    decision = sasy.check_tool_call("send_email", json.dumps(args),
+                                    input_node_ids=[request])
+    if decision.authorized:
+        result = send_email(**args)
+        sasy.record(result, inputs=[request], result_of=("send_email", args))
+    else:
+        print(decision.denial_reasons)
+```
+
+`sasy.record` returns the message's ID; its `inputs`
+become edges in the dependency graph over which policies operate.
+The built-in framework adapters make these calls for you; see
+[add a framework](/instrumentation/) to integrate yours.
+See [use the SDK directly](/quickstart/) for more on recording and authorization.

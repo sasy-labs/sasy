@@ -1,0 +1,4 @@
+/* Give diagrams and policy comparisons room while retaining responsive sidebars. */
+:root {
+  --sl-content-width: 56rem;
+}

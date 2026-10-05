@@ -1,0 +1,24 @@
+#include "common_policy.dl"
+
+// Unconditional action admission makes changes in deny/transform outputs visible.
+IsAuthorized(idx) :- Actions(idx, _).
+
+DenialReason(idx, "block", "dependency danger", "remove dependency") :-
+    Actions(idx, $CallTool("write", _)), CurrentDepends("danger").
+DenialReason(idx, "block", "reachable danger", "remove path") :-
+    Actions(idx, $CallTool("export", _)), ReachableFrom("danger", "middle").
+
+// A negative consumer of recursive graph state must also keep its demand gate.
+DenialReason(idx, "block", "approval absent", "record approval") :-
+    Actions(idx, $CallTool("audit", _)), !CurrentDepends("approval").
+
+// Non-denial outputs are observable too: inferring only from deny rules is wrong.
+ApplyTransform(idx, "fixture-transform") :-
+    Actions(idx, $CallTool("transform", _)), CurrentDepends("danger").
+
+// This prerequisite is independent of both recursive helpers, their gates, and
+// the current request. Its isolated node need not be in the dependency chain.
+.decl StateSignal()
+StateSignal() :- SentMessage("state-signal", _).
+DenialReason(idx, "block", "state-signalled danger", "clear signal or dependency") :-
+    Actions(idx, $CallTool("state-write", _)), StateSignal(), CurrentDepends("danger").

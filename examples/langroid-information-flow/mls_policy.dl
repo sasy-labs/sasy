@@ -1,0 +1,88 @@
+// Multi-level security. A document has a level, a reader and a recipient have a
+// clearance, and both are facts in this file: the program knows none of them.
+// No read up (a reader's clearance covers the document it opens) and no write
+// down (a recipient's clearance covers every document the message being sent
+// was computed from).
+.decl FileLevel(path: symbol, level: number)
+FileLevel("public/memo.txt", 0).
+FileLevel("internal/merger-plan.txt", 2).
+FileLevel("inbox/xyz-disclosure.txt", 0).
+
+.decl Clearance(who: symbol, level: number)
+Clearance("board@acme.example", 3).
+Clearance("manager@acme.example", 2).
+Clearance("partner@example.net", 0).
+Clearance("vendor@xyz.example", 0).
+Clearance("auditor@xyz.example", 0).
+Clearance("records", 2).
+Clearance("research", 1).
+Clearance("main", 0).
+
+// The documents the message being sent was computed from, however many agents
+// and summaries away they are.
+.decl ReadInDeps(path: symbol)
+ReadInDeps(path) :-
+    CurrentDepends(id),
+    ToolResult(id, "read_file", args),
+    path = @json_get_str(args, "path").
+
+// The agent making this call. The name is the one the program gave the agent;
+// the agents' code is trusted, and neither the model nor a document it reads can
+// change it.
+.decl Caller(agent: symbol)
+Caller(agent) :- Current(id), SentMessage(id, message), agent = message.agent.
+
+IsAuthorized(idx) :-
+    Actions(idx, a),
+    IsTool(a, "read_file"),
+    a = $CallTool(_, args),
+    path = @json_get_str(args, "path"),
+    FileLevel(path, level),
+    Caller(agent),
+    Clearance(agent, clearance),
+    clearance >= level.
+
+// @deny_message: The reading agent is not cleared for this document
+// @suggestion: Ask an agent whose clearance covers the document's level
+Unauthorized(idx) :-
+    Actions(idx, a),
+    IsTool(a, "read_file"),
+    a = $CallTool(_, args),
+    path = @json_get_str(args, "path"),
+    FileLevel(path, level),
+    Caller(agent),
+    Clearance(agent, clearance),
+    clearance < level.
+
+IsAuthorized(idx) :-
+    Actions(idx, a),
+    IsTool(a, "send_email"),
+    a = $CallTool(_, args),
+    to = @json_get_str(args, "to"),
+    Clearance(to, _).
+
+// @deny_message: The recipient is not cleared for a document this message was computed from
+// @suggestion: Send to a recipient cleared for that level, or start a task that never read it
+Unauthorized(idx) :-
+    Actions(idx, a),
+    IsTool(a, "send_email"),
+    a = $CallTool(_, args),
+    to = @json_get_str(args, "to"),
+    Clearance(to, clearance),
+    ReadInDeps(path),
+    FileLevel(path, level),
+    level > clearance.
+
+// Langroid's own orchestration tools end a step or route a message between
+// agents. An allowlist that leaves them out stalls the task loop.
+IsAuthorized(idx) :- Actions(idx, a), IsTool(a, "done_tool").
+IsAuthorized(idx) :- Actions(idx, a), IsTool(a, "agent_done_tool").
+IsAuthorized(idx) :- Actions(idx, a), IsTool(a, "done_pass_tool").
+IsAuthorized(idx) :- Actions(idx, a), IsTool(a, "result_tool").
+IsAuthorized(idx) :- Actions(idx, a), IsTool(a, "pass_tool").
+IsAuthorized(idx) :- Actions(idx, a), IsTool(a, "send_tool").
+IsAuthorized(idx) :- Actions(idx, a), IsTool(a, "agent_send_tool").
+IsAuthorized(idx) :- Actions(idx, a), IsTool(a, "forward_tool").
+
+// Optional speed-up: only an email needs its ancestry, so skip the walk for other tools.
+CurrentDependsPolicyRelevant() :- IsTool(_, "send_email").

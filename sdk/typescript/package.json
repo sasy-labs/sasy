@@ -1,0 +1,62 @@
+{
+  "name": "sasy-js",
+  "version": "0.5.0",
+  "description": "Policy enforcement for LLM agent tool calls, decided from each call's message ancestry",
+  "keywords": [
+    "llm",
+    "agents",
+    "policy",
+    "authorization",
+    "datalog",
+    "provenance",
+    "prompt-injection"
+  ],
+  "author": "Sasy, Inc.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "files": [
+    "dist/",
+    "README.md",
+    "LICENSE",
+    "NOTICE"
+  ],
+  "scripts": {
+    "proto:generate": "rm -rf src/generated && mkdir -p src/generated && protoc --ts_proto_out=./src/generated --ts_proto_opt=outputServices=grpc-js,esModuleInterop=true,useOptionals=messages,env=node,forceLong=number,importSuffix=.js -I../../proto ../../proto/credential_server.proto ../../proto/observability.proto ../../proto/policy_engine.proto ../../proto/reference_monitor.proto",
+    "build": "npm run proto:generate && tsc",
+    "lint": "eslint src/",
+    "typecheck": "npm run proto:generate && tsc --noEmit",
+    "test": "bun test",
+    "clean": "rm -rf dist src/generated"
+  },
+  "dependencies": {
+    "@bufbuild/protobuf": "2.11.0",
+    "@grpc/grpc-js": "^1.10.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "eslint": "^10.2.0",
+    "ts-proto": "^2.11.6",
+    "typescript": "^5.4.0",
+    "typescript-eslint": "^8.58.1"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "homepage": "https://docs.sasy.ai",
+  "bugs": {
+    "url": "https://github.com/sasy-labs/sasy/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/sasy-labs/sasy",
+    "directory": "sdk/typescript"
+  }
+}

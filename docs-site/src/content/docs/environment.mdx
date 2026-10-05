@@ -1,0 +1,72 @@
+---
+title: Engine environment
+description: Runtime, development and build variables understood by the core Rust engine.
+---
+
+This is the `SASY_*` inventory for the core Rust `sasy` binary and its policy runtime. These are process settings, not policy facts. Explicit CLI values take precedence where a variable has a corresponding flag. A variable for an unavailable backend or build feature does not enable that feature. Use `sasy serve --help` for flags; see [configuration](/configuration/) for complete startup examples.
+
+SDK variables such as `SASY_URL` and `SASY_API_KEY`, and Make variables such as `SASY_BIN` configure their respective clients or launchers; the core engine does not read them as listener or authentication configuration. The server needs `--auth-provider` even when a client API key is in its environment.
+
+## Authentication and credential sources
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `SASY_ALLOW_NO_AUTH` | off | Explicitly allow startup without an authentication provider for local development. This removes caller authentication; use a configured provider for any shared deployment. |
+| `SASY_API_KEY_SUFFIX` | unset | Legacy server compatibility: append `-<suffix>` to every configured static key. Leave unset when provisioning independent full keys. SDKs accept full keys and do not compose suffixes. |
+| `SASY_ALLOW_DEFAULT_KEYS` | off | Local development override accepting the repository's known example keys verbatim. Replace example keys instead for shared deployments. |
+| `SASY_CREDENTIAL_BACKEND` | `sqlite` | `--credential-backend`: `sqlite`, `memory`, or `openbao`. The memory backend shares its seeded credentials across tenants. |
+| `SASY_CREDENTIALS_ENV_FILE` | unset | `--credentials-env-file`: additional credentials for the memory backend; file entries override the process environment. Other backends warn and ignore this option. |
+| `SASY_CREDENTIAL_<SERVICE>_<KEY>` | unset | Seed a credential for the memory backend, or from an env file passed to `init-credentials`. Split at the first underscore after the prefix; service and key become lowercase. These wildcard-entity credentials are available to all authenticated entities in the backend's scope. |
+
+The default-off boolean switches above accept `1`, `true`, `yes`, or `on` (case-insensitive, whitespace trimmed). They do not provision credentials. Standard provider variables `OPENAI_API_KEY`, `OPENFDA_API_KEY`, and `BRAVE_API_KEY` also seed the credential sources. OpenBao uses the `OPENBAO_*` counterparts of its CLI flags; see `sasy serve --help`.
+
+## Evaluation and session lifetime
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `SASY_QUERY_TIMEOUT_SECS` | `10` | `--query-timeout-secs`: fail-closed answer deadline. The evaluator can finish its in-flight operation after the request is refused. |
+| `SASY_EVALUATOR_STALL_SECS` | `60` | `--evaluator-stall-secs`: kill and replace an evaluator that owes a reply beyond this interval. Must be at least the query deadline. |
+| `SASY_SESSION_IDLE_TTL_SECS` | `1800` | Idle evaluator lifetime; `0` disables idle eviction. Recorded graph state survives eviction. |
+| `SASY_SESSION_SWEEP_INTERVAL_SECS` | `60` | Interval between session and policy-orphan sweeps; `0` disables both. |
+| `SASY_POLICY_VARIANT_IDLE_TTL_SECS` | `3600` | Idle lifetime of unreferenced policy variants; `0` disables orphan sweeping. |
+| `SASY_MAX_LIVE_SESSIONS` | unbounded | Positive cap on live per-session evaluators. Evicts the least recently active evaluator when needed; `0` also means unbounded. This is not a durable graph-storage quota. |
+| `SASY_REPLAY_EAGER` | off | Compile persisted policies eagerly on startup instead of loading them on demand. Accepts the default-off boolean spellings above. |
+| `SASY_ORACLE_REDACTION` | `on` | `--oracle-redaction`: `on` or `off` scrubbing of recognized secret shapes in oracle question/context strings. Does not redact the graph or the agent's own model requests. Unrecognized values leave redaction on. |
+
+## Compilation and confinement
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `SASY_COMPILE_TIMEOUT_SECS` | `300` | Timeout for each external compiler/preprocessor step; bounds hung toolchain processes. |
+| `SASY_SOUFFLE_ASSETS` | embedded assets | Directory containing all six assets emitted by `sasy install-assets`. Missing assets are refused. |
+| `SASY_SOUFFLE_INCLUDE` | detected headers | Directory containing `souffle/SouffleInterface.h`. |
+| `SASY_SOUFFLE_BUILD_CACHE_DIR` | `<data-dir>/souffle-build-cache` | Compiled evaluator cache. Empty, `off`, `false`, or `0` disables caching. Relative paths use the process working directory. |
+| `SASY_SOUFFLE_BUILD_CACHE_MAX_BYTES` | `1073741824` (1 GiB) | Positive cache byte budget. Zero or invalid values use the default. |
+| `SASY_SOUFFLE_BUILD_CACHE_MAX_AGE_DAYS` | `30` | Prune unused cache entries by age; `0` disables age pruning while preserving the byte budget. |
+| `SASY_SOUFFLE_BUILD_CACHE_PER_TENANT` | off | Experimental tenant cache-key switch. The current runtime compilation path does not supply a tenant key, so enabling this emits a warning and leaves the cache shared. Do not rely on it for tenant isolation. |
+| `SASY_SOUFFLE_MAGIC_SET` | unset | Relation names forwarded to Soufflé's magic-set option, a Datalog optimization that rewrites rules to compute only the facts a query needs. Changes compiled cache identity; leave unset unless qualifying the resulting policy behavior. |
+| `SASY_ALLOW_USER_FUNCTORS` | off | `--allow-user-functors`: admit non-admin native functors with `sandboxed` (or `1`/`true`/`yes`/`on`) only when required sandbox support works. `unsandboxed` is an explicit development escape hatch. Custom C++ is native code. |
+| `SASY_EVALUATOR_BWRAP` | enabled where supported | Set exactly `0` to disable evaluator bubblewrap confinement. This prevents sandbox-required non-admin functor admission. |
+| `SASY_SECCOMP_PRE_EXEC_DISABLE` | unset | Set exactly `1` to disable the Linux pre-exec seccomp layer for debugging. This prevents sandbox-required non-admin functor admission and removes constructor-time protection. |
+| `SASY_NIX_RUNTIME_MANIFEST` | unset | Nix launcher-supplied immutable runtime closure/tool manifest. Validates and confines compilation to the packaged toolchain. Use the package launcher instead of constructing this setting by hand. |
+
+`DISABLE_BWRAP=1` is the non-prefixed, host-wide development switch for bubblewrap; it also affects compilation. A host that cannot provide the required sandbox must refuse sandbox-required uploads. A [restricted engine](/building/#full-and-restricted-engines) serves only its baked profiles and does not gain the ability to compile a policy through these variables. The Nix package supplies the toolchain and manifest described in [build the engine](/building/).
+
+## Experimental diagnostics
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `SASY_FLUSH_INTERVAL_US` | `1000` | Evaluator update coalescing interval in microseconds; `0` disables the timer delay. |
+| `SASY_KEEPALIVE_INTERVAL_MS` | `0` | Experimental empty-update keepalive interval; `0` disables it. Intended for performance investigation. |
+| `SASY_SERVER_LATENCY_LOG_FILE` | unset | Append request timing and session identifiers as JSONL. A failed file open disables logging. Protect the output as operational data. |
+
+## Build-only and internal controls
+
+| Variable | Scope |
+| --- | --- |
+| `SASY_POLICY_PACK` | Build-time directory consumed by Cargo for a restricted engine's baked policy pack. Changing it when starting an installed binary cannot change its profiles. |
+| `SASY_ASSURED_MODE` | Exact value `1` makes the engine refuse to start unless every external tool it runs is named by an absolute path and matches a SHA-256 pin, given in the `SASY_TOOL_*` variables below. It pins tools; it is not a general security switch and produces no attestation. |
+| `SASY_TOOL_PYTHON3_PATH`, `SASY_TOOL_PYTHON3_SHA256`, `SASY_TOOL_SOUFFLE_PATH`, `SASY_TOOL_SOUFFLE_SHA256`, `SASY_TOOL_CXX_PATH`, `SASY_TOOL_CXX_SHA256` | The absolute paths and lowercase SHA-256 pins that `SASY_ASSURED_MODE=1` requires. Ordinary startup ignores these and resolves its tools from the Nix manifest or `PATH`. |
+| `SASY_SKIP_IN_PROC_SANDBOX`, `SASY_SECCOMP_PRE_EXEC` | Internal markers the engine passes to a child process it has already confined. Setting them yourself claims a protection that was never installed. |
+
+Test-only subprocess markers and `SASY_TEST_SKIP_INTERPRETED` are test harness controls, not supported deployment settings. Other libraries use their own variables, including logging (`RUST_LOG`), the model and provider settings for the optional LLM-backed policy predicate (`LLM_*`), and optional graph mirrors; consult the corresponding component documentation before enabling them.

@@ -1,0 +1,52 @@
+[package]
+name = "sasy-refmon"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Reference monitor proxy with policy enforcement"
+
+[lib]
+name = "sasy_refmon"
+
+[[bin]]
+name = "refmon-service"
+path = "src/bin/refmon_service.rs"
+# The standalone refmon-service binary uses the proxy/transform stack directly,
+# so it requires the `proxy` feature (cargo skips it under --no-default-features).
+required-features = ["proxy"]
+
+[dependencies]
+sasy-common = { workspace = true }
+sasy-auth = { workspace = true }
+sasy-credential = { workspace = true, optional = true }
+tonic = { workspace = true }
+tokio = { workspace = true }
+tokio-stream = { workspace = true }
+prost = { workspace = true }
+reqwest = { workspace = true, optional = true }
+bytes = "1"
+futures-util = "0.3"
+hyper = { workspace = true, optional = true }
+hyper-util = { workspace = true, optional = true }
+http-body-util = { workspace = true, optional = true }
+url = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+clap = { workspace = true }
+parking_lot = { workspace = true }
+
+[features]
+# Outbound HTTP mediation: forward proxy, gRPC ProxyHTTP, SSRF checks, and
+# credential transforms. Disable this feature for CheckToolCall-only clients;
+# they execute returned transforms themselves without the HTTP proxy stack.
+default = ["proxy"]
+proxy = ["dep:reqwest", "dep:hyper", "dep:hyper-util", "dep:http-body-util", "dep:sasy-credential"]
+
+[dev-dependencies]
+flate2 = "1"

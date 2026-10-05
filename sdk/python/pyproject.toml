@@ -1,0 +1,80 @@
+[project]
+name = "sasy"
+version = "0.5.0"
+description = "Policy enforcement for LLM agent tool calls, decided from each call's message ancestry"
+readme = "README.md"
+authors = [{ name = "Sasy, Inc." }]
+keywords = [
+    "llm",
+    "agents",
+    "policy",
+    "authorization",
+    "datalog",
+    "provenance",
+    "langchain",
+    "google-adk",
+    "prompt-injection",
+]
+requires-python = ">=3.11"
+# SPDX form (PEP 639). `license-files` makes the wheel carry the copy of the
+# Apache License that sits next to this file.
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
+classifiers = [
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Security",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+dependencies = [
+    # gRPC / protobuf
+    "grpcio>=1.80.0",
+    "protobuf>=6.31.1",
+    # HTTP
+    "httpx>=0.28.1",
+    "requests>=2.32.0",
+    # Config / validation
+    "pydantic>=2.0.0",
+    "pydantic-settings>=2.0.0",
+    "pyyaml>=6.0",
+    # TLS / auth
+    "cryptography>=44.0.0",
+    "pyjwt[crypto]>=2.8.0",
+    # Instrumentation
+    "wrapt>=1.14.0",
+    # Observability
+    "networkx>=3.0",
+    "opentelemetry-api>=1.20.0",
+]
+
+[project.scripts]
+# Runs a local engine in Docker; see sasy/cli.py.
+sasy = "sasy.cli:main"
+
+[project.urls]
+Homepage = "https://docs.sasy.ai"
+Documentation = "https://docs.sasy.ai"
+Repository = "https://github.com/sasy-labs/sasy"
+Issues = "https://github.com/sasy-labs/sasy/issues"
+
+[project.optional-dependencies]
+all = ["sasy[langchain,adk,langroid,otel]"]
+# Qualify 0.67.8 in CI while allowing applications with older Langroid constraints.
+langroid = ["langroid>=0.67.1,<=0.67.8"]
+# These adapters rely on qualified framework dispatch boundaries.
+langchain = ["langchain==1.4.0", "langchain-core==1.6.3", "langgraph==1.2.11", "langgraph-prebuilt==1.1.0"]
+adk = ["google-adk==2.9.1"]
+otel = [
+    "opentelemetry-api>=1.20.0",
+    "opentelemetry-sdk>=1.20.0",
+    "opentelemetry-exporter-otlp>=1.20.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["sasy"]

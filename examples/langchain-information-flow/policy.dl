@@ -1,0 +1,36 @@
+// The model may read synthetic documents and draft a summary. Publishing a
+// summary externally is forbidden if it depends on a confidential read, even
+// after an intermediate drafting tool removes the original text.
+.decl ConfidentialInput()
+ConfidentialInput() :- CurrentDepends(id), ToolResult(id, "read_confidential", _).
+
+IsAuthorized(idx) :- Actions(idx, a), IsTool(a, "read_public").
+IsAuthorized(idx) :- Actions(idx, a), IsTool(a, "read_confidential").
+IsAuthorized(idx) :- Actions(idx, a), IsTool(a, "draft_summary").
+IsAuthorized(idx) :- Actions(idx, a), IsTool(a, "research").
+IsAuthorized(idx) :- Actions(idx, a), IsTool(a, "review").
+IsAuthorized(idx) :-
+    Actions(idx, a),
+    IsTool(a, "publish"),
+    a = $CallTool(_, args),
+    @json_get_str(args, "destination") = "internal".
+IsAuthorized(idx) :-
+    Actions(idx, a),
+    IsTool(a, "publish"),
+    a = $CallTool(_, args),
+    @json_get_str(args, "destination") = "external".
+
+// @deny_message: External publication depends on confidential information
+// @suggestion: Publish internally or start a separate task using public inputs
+Unauthorized(idx) :-
+    Actions(idx, a),
+    IsTool(a, "publish"),
+    a = $CallTool(_, args),
+    @json_get_str(args, "destination") = "external",
+    ConfidentialInput().
+
+// The live mode uses only synthetic data and explicitly trusts this provider.
+IsAuthorized(idx) :- Actions(idx, a), QueriesHost(a, "api.openai.com").
+
+// Optional speed-up: only publish needs its ancestry, so skip the walk for other tools.
+CurrentDependsPolicyRelevant() :- IsTool(_, "publish").

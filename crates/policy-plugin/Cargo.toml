@@ -1,0 +1,22 @@
+[package]
+name = "sasy-policy-plugin"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Example policy plugin cdylib — reference C-ABI implementation (wraps StubEngine)"
+
+[lib]
+name = "sasy_policy_plugin"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+sasy-common = { workspace = true }
+sasy-policy = { workspace = true }
+policy-sdk = { workspace = true }
+prost = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+anyhow = { workspace = true }

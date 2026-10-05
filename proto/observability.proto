@@ -1,0 +1,424 @@
+syntax = "proto3";
+
+package observability;
+
+// Records the message dependency graph that policies are evaluated against.
+service Observability {
+    // Record messages (graph nodes). Returns one ID per recorded event, in
+    // order: the caller's `Event.id` when set, otherwise a server-generated
+    // UUID. An event with no content at all — no text, tools, role, agent,
+    // entity or derived_from — records nothing and gets an empty string in
+    // its place, and a batch of nothing but such events records nothing and
+    // returns an empty list.
+    rpc RegisterEvents (Events) returns (IDs);
+    // Record edges between already-recorded messages.
+    rpc RegisterDependencies (Dependencies) returns (Response);
+    // Combined: register events and dependencies in a single atomic transaction
+    rpc RegisterEventsWithDependencies (EventsWithDependencies) returns (IDs);
+    // Atomically resolve full immutable message snapshots. IDs preserve input order.
+    rpc ResolveEvents (EventSnapshots) returns (IDs);
+    // Full snapshots and validated compact references. A server without this
+    // RPC returns UNIMPLEMENTED.
+    rpc ResolveSnapshots (EventSnapshots) returns (IDs);
+    // The message plus everything it transitively depends on: its ancestry,
+    // which is what policies see.
+    rpc BackwardSlice (SliceRequest) returns (Graph);
+    // Everything that transitively depends on the message.
+    rpc ForwardSlice (SliceRequest) returns (Graph);
+
+    // Computation/Span operations (OpenTelemetry)
+    // Record computations (spans): the units of work that produced messages.
+    rpc RegisterComputations (Computations) returns (IDs);
+    // Every computation of one trace, with the edges between them.
+    rpc GetTrace (TraceRequest) returns (TraceGraph);
+    // One computation by id.
+    rpc GetSpan (SpanRequest) returns (Computation);
+}
+
+// Updates service for graph state streaming
+service ObservabilityUpdates {
+    // Get current graph state
+    rpc GetState (StateRequest) returns (GraphState) {}
+    // Bidirectional stream: client sends StreamMessage (subscribe/ack), server sends batched updates
+    rpc StreamUpdates (stream StreamMessage) returns (stream GraphUpdates) {}
+}
+
+// Batched updates message
+message GraphUpdates {
+    int64 sequence = 1;
+    repeated GraphUpdate updates = 2;
+}
+
+// Input message for registering events
+message Events {
+    repeated Event events = 1;
+    // Session this batch's events belong to. The SDK always emits
+    // events under a single `sasy.session(...)` context, so the
+    // session is a property of the batch rather than each event.
+    // Empty / unset = the per-tenant global session
+    // (writing to it requires the `admin` role).
+    optional string session_id = 2;
+}
+
+// One recorded message: a node of the dependency graph.
+message Event {
+    // Message content.
+    optional string text = 1;
+    // Free-form name of the producing agent or component.
+    optional string agent = 2;
+    // Who produced it: SYSTEM prompt, USER input, LLM output, or AGENT
+    // (another agent or a tool).
+    optional Role role = 3;
+    // Caller-chosen ID, unique within the session; unset lets the server
+    // assign one.
+    optional string id = 4;
+    // Tool calls this message requests; arguments are a JSON string.
+    repeated Tool tools = 5;
+    // If this message is a tool result, the tool it was derived from
+    optional Tool derived_from = 6;
+    // Tag 7 and the name `expected_edges` are reserved and must not be
+    // reused on the wire.
+    reserved 7;
+    reserved "expected_edges";
+    // Server-stamped principal (auth-derived). Any value sent by
+    // a client is overwritten at the gRPC boundary.
+    optional string principal = 8;
+    // User-supplied actor in the caller's domain (e.g. an end-user
+    // identity when a gateway relays events). Free-form, *not*
+    // overwritten by the server. Distinct from `principal` (the
+    // immutable auth-bound writer) and from `agent` (conversation
+    // role label).
+    optional string entity = 9;
+    // Adapter-defined canonical record of the source message. The content
+    // hash is over the encoded `Event`, so what an adapter puts here is
+    // covered by it and what it leaves out can be edited without the
+    // recorded node changing. The server stores and returns it verbatim and
+    // never interprets it; policies read `text`. Unset, it encodes to
+    // nothing, so a node recorded without it hashes as it always did.
+    optional string metadata = 10;
+}
+
+message Tool {
+    optional string name = 1;
+    optional string arguments = 2;
+}
+
+enum Role {
+    SYSTEM = 0;
+    USER = 1;
+    LLM = 2;
+    AGENT = 3;
+}
+
+message IDs {
+    repeated string ids = 1;
+}
+
+message Dependencies {
+    repeated Edge edges = 1;
+    // Session every edge in this batch belongs to. See
+    // `Events.session_id`.
+    optional string session_id = 2;
+}
+
+// Combined events and dependencies for atomic registration
+message EventsWithDependencies {
+    repeated Event events = 1;
+    repeated Edge edges = 2;
+    optional string session_id = 3;
+}
+
+// One complete immutable snapshot. event.id is a required stable origin alias,
+// unique within this batch, not a canonical version ID. Server authentication
+// stamps principal on the event and dependencies before resolving identity.
+message EventSnapshot {
+    Event event = 1;
+    // An existing immutable version for this origin, scope and principal.
+    optional string base_id = 2;
+    // Complete incoming dependency set. Every destination must equal event.id;
+    // sources name another batch alias or an existing immutable version in this scope.
+    // An empty set explicitly removes dependencies. No base->version edge or
+    // metadata/tool provenance is inferred from base_id.
+    repeated Edge dependencies = 3;
+    // Requires base_id, an empty dependencies list, and unchanged full event
+    // content. Reuses the base's complete incoming set; mutations are rejected.
+    bool reuse_dependencies = 4;
+    // Compact reference, accepted only by ResolveSnapshots: exactly 32 bytes,
+    // SHA-256 of UTF-8 "sasy:event-content:v1" + NUL + protobuf Event bytes
+    // after clearing id and principal and discarding unknown fields. Optional
+    // presence and tool ordering are significant. Requires event={id:origin},
+    // base_id, reuse_dependencies=true and no dependencies. A mismatch fails;
+    // references never create a version or infer provenance.
+    optional bytes content_hash = 5;
+}
+
+message EventSnapshots {
+    repeated EventSnapshot snapshots = 1;
+    optional string session_id = 2;
+}
+
+// A dependency: `destination` was produced using `source`.
+message Edge {
+    string source = 1;
+    string destination = 2;
+    // 0-based position of `source` in the destination's input history.
+    optional uint32 message_index = 3;
+    // True when `source` was the last input before the destination.
+    optional bool proximal = 4;
+    // Server-stamped principal (auth-derived). Any value sent by
+    // a client is overwritten at the gRPC boundary.
+    optional string principal = 5;
+    // User-supplied actor in the caller's domain. See `Event.entity`
+    // for the distinction from `principal`.
+    optional string entity = 6;
+}
+
+message Response {
+    optional string response = 1;
+}
+
+message SliceRequest {
+    optional string event_id = 1;
+    // Maximum edge distance from `event_id`; unset means unbounded.
+    optional uint32 max_depth = 2;
+    // Session the `event_id` lives in. When set, the server reads
+    // that shard directly (the caller names its own session, e.g.
+    // from the active `sasy.session(...)` context) instead of
+    // resolving the id via the tenant-wide reverse index — which
+    // removes the intra-tenant last-writer-wins ambiguity when two
+    // sessions reuse the same id. Empty/unset = resolve via the
+    // reverse index (admin/debug id-only probes; global reads).
+    optional string session_id = 3;
+}
+
+message Graph {
+    repeated Event nodes = 1;
+    repeated Edge edges = 2;
+}
+
+// Graph state and streaming messages
+
+message StateRequest {}
+
+// Complete graph snapshot with the sequence number it reflects. The server
+// sends the whole snapshot in a single FULL_STATE update: when a client
+// subscribes from sequence 0, and again when a client has fallen so far
+// behind the update stream that the updates it missed are no longer buffered.
+message GraphState {
+    repeated Event events = 1;
+    repeated Edge edges = 2;
+    int64 sequence = 3;
+}
+
+// Client message for bidirectional streaming
+message StreamMessage {
+    oneof message {
+        StreamRequest subscribe = 1;
+        Ack ack = 2;
+    }
+}
+
+message StreamRequest {
+    // Tag 2 is reserved. The tenant is always derived from the
+    // authenticated caller, never from the request.
+    reserved 2;
+    reserved "tenant_id";
+
+    int64 from_sequence = 1;
+}
+
+message Ack {
+    int64 position = 1;
+}
+
+// Individual update within a batch
+message GraphUpdate {
+    UpdateType type = 1;
+
+    // For node_created
+    optional Event event = 2;
+
+    // For edge_created
+    optional Edge edge = 3;
+
+    // For node_deleted
+    optional string node_id = 4;
+
+    // For edge_deleted (source + destination)
+    optional string source_id = 5;
+    optional string destination_id = 6;
+
+    // For full_state refresh
+    optional GraphState full_state = 7;
+
+    // Timestamp of the change
+    optional string timestamp = 8;
+
+    // For computation_created
+    optional Computation computation = 9;
+
+    // For computation_edge_created (CHILD_OF)
+    optional ComputationEdge computation_edge = 10;
+
+    // For computation_message_link_created (PRODUCES/CONSUMES)
+    optional ComputationMessageEdge computation_message_edge = 11;
+
+    // For FULL_STATE_CHUNK
+    optional GraphStateChunk state_chunk = 12;
+
+    // Tag 13 is reserved. Per-tenant filtering happens on the server,
+    // using the auth-derived tenant and the scope carried inside
+    // `event` / `edge` / `state_chunk`.
+    reserved 13;
+    reserved "tenant_id";
+
+    // Server-stamped session scope for node_created / edge_created /
+    // computation_* updates (and chunks). Empty = per-tenant global.
+    optional string session_id = 14;
+}
+
+enum UpdateType {
+    HEARTBEAT = 0;
+    NODE_CREATED = 1;
+    NODE_DELETED = 2;
+    EDGE_CREATED = 3;
+    EDGE_DELETED = 4;
+    FULL_STATE = 5;
+    // Computation-related update types
+    COMPUTATION_CREATED = 6;
+    COMPUTATION_DELETED = 7;
+    COMPUTATION_EDGE_CREATED = 8;
+    COMPUTATION_MESSAGE_LINK_CREATED = 9;
+    // Chunked full state transfer: a snapshot split over several updates,
+    // to be accumulated by the client and applied at the commit. Reserved
+    // for large graphs; the server does not send them, it sends the whole
+    // snapshot as one FULL_STATE.
+    FULL_STATE_START = 10;   // Start of a chunked full state
+    FULL_STATE_CHUNK = 11;   // One chunk of nodes or edges
+    FULL_STATE_COMMIT = 12;  // End; apply the accumulated state
+}
+
+// Chunk of graph state for streaming large states
+message GraphStateChunk {
+    repeated Event events = 1;  // Node chunk (nodes sent first)
+    repeated Edge edges = 2;    // Edge chunk (edges sent after all nodes)
+}
+
+// ============================================
+// COMPUTATION/SPAN MESSAGES (OpenTelemetry)
+// ============================================
+
+// Status codes matching OTel spec
+enum SpanStatusCode {
+    STATUS_UNSET = 0;
+    STATUS_OK = 1;
+    STATUS_ERROR = 2;
+}
+
+// Span event (log entry or exception within a span)
+message SpanEvent {
+    string name = 1;
+    uint64 timestamp_ns = 2;
+    map<string, string> attributes = 3;
+}
+
+// Key-value attribute with typed value
+message SpanAttribute {
+    string key = 1;
+    oneof value {
+        string string_value = 2;
+        int64 int_value = 3;
+        double double_value = 4;
+        bool bool_value = 5;
+        string json_value = 6;  // For complex types
+    }
+}
+
+// Computation node representing an OTel span
+message Computation {
+    // Identifiers
+    string trace_id = 1;
+    string span_id = 2;
+    optional string parent_span_id = 3;
+
+    // Core fields
+    string name = 4;
+    uint64 start_time_ns = 5;
+    uint64 end_time_ns = 6;
+    uint64 duration_ns = 7;
+
+    // Status
+    SpanStatusCode status_code = 8;
+    optional string status_message = 9;
+
+    // Attributes and events (JSON serialized for flexibility)
+    string attributes_json = 10;
+    string events_json = 11;
+
+    // Resource info
+    optional string service_name = 12;
+    optional string service_version = 13;
+
+    // Relationships (IDs for reference)
+    repeated string input_message_ids = 14;
+    optional string output_message_id = 15;
+    repeated string linked_span_ids = 16;
+
+    // Server-stamped principal (auth-derived). Any value sent by
+    // a client is overwritten at the gRPC boundary.
+    optional string principal = 17;
+    // User-supplied actor in the caller's domain. See `Event.entity`
+    // for the distinction from `principal`.
+    optional string entity = 18;
+}
+
+// Collection of computations
+message Computations {
+    repeated Computation computations = 1;
+    optional string session_id = 2;
+}
+
+// Edge between computations (CHILD_OF relationship)
+message ComputationEdge {
+    string parent_span_id = 1;
+    string child_span_id = 2;
+}
+
+// Edge between computation and message
+message ComputationMessageEdge {
+    string span_id = 1;
+    string message_id = 2;
+    ComputationMessageEdgeType edge_type = 3;
+    optional int32 message_index = 4;
+}
+
+enum ComputationMessageEdgeType {
+    PRODUCES = 0;
+    CONSUMES = 1;
+}
+
+// Request to get a full trace
+message TraceRequest {
+    string trace_id = 1;
+    optional uint64 start_time_ns = 2;
+    optional uint64 end_time_ns = 3;
+}
+
+// Request to get a span by ID
+message SpanRequest {
+    string span_id = 1;
+    optional bool include_children = 2;
+    optional bool include_messages = 3;
+    // Session the `span_id` lives in; see `SliceRequest.session_id`.
+    // When set the server reads that shard directly instead of
+    // resolving via the tenant-wide reverse index.
+    optional string session_id = 4;
+}
+
+// Full trace response with spans and messages
+message TraceGraph {
+    repeated Computation computations = 1;
+    repeated Event messages = 2;
+    repeated ComputationEdge computation_edges = 3;
+    repeated ComputationMessageEdge message_edges = 4;
+}

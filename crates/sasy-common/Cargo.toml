@@ -1,0 +1,21 @@
+[package]
+name = "sasy-common"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Protobuf stubs and shared domain types for the SASY engine"
+
+[lib]
+name = "sasy_common"
+
+[dependencies]
+tonic = { workspace = true }
+prost = { workspace = true }
+prost-types = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[build-dependencies]
+tonic-build = { workspace = true }

@@ -1,0 +1,19 @@
+#include "common_policy.dl"
+
+// Deliberately absent until graph history changes. Diagnostics must not freeze
+// this custom relation's current truth value into "blocked".
+.decl CustomApproval()
+CustomApproval() :- CurrentDepends("approval").
+
+// @deny_message: fixture-approval-route
+// @suggestion: record an approval
+IsAuthorized(idx) :- Actions(idx, $CallTool("approve", _)),
+    Principal("trusted"), HasRole("approver"), CustomApproval().
+
+// Existential witness bindings must remain correlated across retained literals.
+// A left row for w1 and a right row for w2 cannot satisfy this route.
+// @deny_message: fixture-correlated-route
+// @suggestion: use the same witness
+IsAuthorized(idx) :- Actions(idx, $CallTool("correlated", _)),
+    ActionMetadata(idx, "left", witness, "yes"),
+    ActionMetadata(idx, "right", witness, "yes"), CustomApproval().

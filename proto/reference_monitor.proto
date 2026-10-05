@@ -1,0 +1,116 @@
+syntax = "proto3";
+
+import "policy_engine.proto";
+
+// Reference monitor: the enforcement point an agent runtime calls before it
+// executes an action. Each decision evaluates the session's bound policy over
+// the ancestry of the requesting messages.
+service RMProxy {
+    // Forward HTTP requests through the monitor. Each request is authorized as
+    // an HTTPRequest action; an authorized request is sent upstream after any
+    // credential-injection transforms. An unauthorized request gets an error
+    // response, unless the policy's `AllowPassthrough` relation holds for it,
+    // in which case it is forwarded unchanged and without transforms.
+    rpc ProxyHTTP (stream HTTPRequest) returns (stream HTTPResponse);
+
+    // Decide whether one tool call may run. Call it BEFORE executing the tool;
+    // the monitor never executes it. A denial is a response, not a gRPC error.
+    rpc CheckToolCall (ToolCallRequest) returns (ToolCallResponse);
+}
+
+message HttpHeader {
+  optional bytes key = 1;
+  optional bytes value = 2;
+}
+
+message Message {
+  repeated HttpHeader headers = 1;
+  optional bytes content = 2;
+}
+
+message BaseRequest {
+    optional string url = 1;
+    optional string method = 2;
+    optional Message message = 3;
+}
+
+message HTTPRequest {
+  optional BaseRequest request = 1;
+  // IDs of the recorded messages that caused this request. The policy sees
+  // them as `Current(id)` and their transitive dependencies as
+  // `CurrentDepends`. Record the messages first; with an empty list, rules
+  // about conversation history match nothing.
+  repeated string input_node_ids = 2;
+  // Session/conversation partition. The server filters its policy
+  // evaluation to this session's graph state. Empty string means the
+  // per-tenant "global" partition. The session must be bound to a
+  // policy via the policy engine's SetPolicy RPC (or fall through
+  // to the tenant default).
+  optional string session_id = 3;
+  // User-supplied per-request actor. Free-form value the caller
+  // attaches to a request (e.g. an end-user identity when a gateway
+  // relays on someone's behalf). NOT auth-attested — preserved
+  // verbatim and surfaced to the policy as `Entity(id)`. The
+  // auth-derived `Principal(id)` is server-stamped from the
+  // connection's mTLS subject / JWT sub / API key entity.
+  optional string entity = 4;
+}
+
+message HTTPResponse {
+  optional uint32 status = 1;
+  optional Message message = 2;
+}
+
+// Request to check authorization for a tool call
+message ToolCallRequest {
+  // Tool function name
+  string fn_name = 1;
+
+  // Tool arguments (typically JSON)
+  string args = 2;
+
+  // IDs of the recorded messages that caused this call, normally the model
+  // message containing the tool call. The policy sees them as `Current(id)`
+  // and their transitive dependencies as `CurrentDepends`. Record the
+  // messages first; with an empty list, rules about conversation history
+  // match nothing.
+  repeated string input_node_ids = 3;
+
+  // Session/conversation partition. The server filters its policy
+  // evaluation to this session's graph state. Empty string means the
+  // per-tenant "global" partition. The session must be bound to a
+  // policy via the policy engine's SetPolicy RPC (or fall through
+  // to the tenant default).
+  optional string session_id = 4;
+
+  // User-supplied per-request actor. Free-form value the caller
+  // attaches to a request (e.g. an end-user identity when a gateway
+  // relays on someone's behalf). NOT auth-attested — preserved
+  // verbatim and surfaced to the policy as `Entity(id)`. The
+  // auth-derived `Principal(id)` is server-stamped from the
+  // connection's mTLS subject / JWT sub / API key entity.
+  optional string entity = 5;
+
+  // Per-action metadata: facts the caller resolved outside the engine for
+  // THIS tool call, for example a package-registry verdict for an install
+  // command. Forwarded verbatim as `Action.metadata` and exposed to the
+  // policy as `ActionMetadata(idx, rel, a, b)`. The engine does not verify
+  // them; they are as trustworthy as the authenticated caller.
+  repeated policy_engine.PolicyMetadataFact metadata = 6;
+}
+
+// Response for tool call authorization check
+message ToolCallResponse {
+  // True only when an allow rule matched and no deny or ask rule did.
+  bool authorized = 1;
+
+  // Set when `authorized` is false: why, and what the policy suggests
+  // instead. A reason of kind ASK means the policy asks for user approval;
+  // a caller with no approval channel must treat it as a denial.
+  optional policy_engine.DenialTrace denial_trace = 2;
+
+  // IDs from the policy's `ApplyTransform` relation that matched. ProxyHTTP
+  // applies them; CheckToolCall returns them for information, so a caller
+  // that cannot apply them must not run the tool.
+  repeated string transform_ids = 3;
+}

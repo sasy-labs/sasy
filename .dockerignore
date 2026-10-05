@@ -1,0 +1,42 @@
+# Everything is excluded, and only what the image needs is let back in, so local
+# API keys, .env files, certificates and engine data never reach an image layer.
+*
+!Cargo.toml
+!Cargo.lock
+!flake.nix
+!flake.lock
+!nix
+nix/*
+!nix/source-files.json
+!nix/toolchain.nix
+!nix/package.nix
+!nix/docker-root.nix
+!crates
+!proto
+!souffle
+!tests
+tests/*
+!tests/fixtures
+tests/fixtures/*
+!tests/fixtures/redaction
+
+# Local state that can sit inside the directories allowed above.
+**/.env
+**/.env.*
+**/.venv
+**/__pycache__
+**/target
+**/node_modules
+**/server-data
+**/certs
+**/data
+**/dist
+**/*.db
+**/*.db-wal
+**/*.db-shm
+**/*.sst
+**/*.pem
+**/*.key
+souffle/souffle-interpreted
+souffle/libfunctors.so
+souffle/libfunctors.dylib

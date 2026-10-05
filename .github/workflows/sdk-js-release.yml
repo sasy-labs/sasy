@@ -1,0 +1,117 @@
+name: sasy-js release
+
+on:
+  push:
+    branches: [main, 'release/**']
+    tags: ['sasy-js-v*']
+  pull_request:
+    branches: [main, 'release/**']
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  core:
+    # Branch/PR pushes already run ci-core; release tags and dispatch must gate here.
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')
+    uses: ./.github/workflows/ci-core.yml
+    permissions:
+      contents: read
+
+  build:
+    if: ${{ !cancelled() && (needs.core.result == 'success' || needs.core.result == 'skipped') }}
+    needs: core
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: '1.3.11'
+      - uses: arduino/setup-protoc@v3
+        with:
+          version: '27.x'
+          repo-token: ${{ github.token }}
+      - name: Check SDK identity and tag
+        run: |
+          node --input-type=module <<'JS'
+          import assert from 'node:assert/strict';
+          import fs from 'node:fs';
+          const pkg = JSON.parse(fs.readFileSync('sdk/typescript/package.json'));
+          assert.equal(pkg.name, 'sasy-js');
+          assert.ok(!pkg.private);
+          if (process.env.GITHUB_REF.startsWith('refs/tags/'))
+            assert.equal(process.env.GITHUB_REF_NAME, `sasy-js-v${pkg.version}`);
+          JS
+      - name: Build and test SDK
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          npm run build:sdk
+          npm run typecheck --workspace=sasy-js
+          npm run lint --workspace=sasy-js
+          npm test --workspace=sasy-js
+          mkdir artifacts
+          npm pack --workspace=sasy-js --pack-destination artifacts
+      - name: Verify standalone package installation
+        run: |
+          mkdir "$RUNNER_TEMP/sdk-consumer"
+          cd "$RUNNER_TEMP/sdk-consumer"
+          npm init -y
+          npm install --ignore-scripts --no-audit --no-fund "$GITHUB_WORKSPACE"/artifacts/sasy-js-*.tgz
+          node --input-type=module <<'JS'
+          import assert from 'node:assert/strict';
+          import fs from 'node:fs';
+          import { fileURLToPath } from 'node:url';
+          import * as sdk from 'sasy-js';
+          const pkg = JSON.parse(fs.readFileSync('node_modules/sasy-js/package.json'));
+          assert.equal(pkg.name, 'sasy-js');
+          assert.ok(fileURLToPath(import.meta.resolve('sasy-js')).startsWith(`${process.cwd()}/node_modules/sasy-js/`));
+          for (const key of ['configure', 'session', 'checkToolCall']) assert.equal(typeof sdk[key], 'function');
+          for (const file of ['LICENSE', 'NOTICE', 'dist/index.d.ts']) assert.ok(fs.statSync(`node_modules/sasy-js/${file}`).size > 0);
+          JS
+      - uses: actions/upload-artifact@v7
+        with:
+          name: sasy-js-package
+          path: artifacts/sasy-js-*.tgz
+          if-no-files-found: error
+
+  publish:
+    if: github.event_name == 'push' && !github.event.repository.private && startsWith(github.ref, 'refs/tags/sasy-js-v')
+    needs: [core, build]
+    runs-on: ubuntu-latest
+    environment:
+      name: npm
+      url: https://www.npmjs.com/package/sasy-js
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+      - uses: actions/download-artifact@v7
+        with:
+          name: sasy-js-package
+          path: artifacts
+      - name: Check npm supports trusted publishing
+        run: |
+          node --input-type=module <<'JS'
+          import assert from 'node:assert/strict';
+          import { execFileSync } from 'node:child_process';
+          const [major, minor, patch] = execFileSync('npm', ['--version'], {encoding: 'utf8'}).trim().split('.').map(Number);
+          assert.ok(major > 11 || (major === 11 && (minor > 5 || (minor === 5 && patch >= 1))), 'npm >=11.5.1 is required');
+          JS
+      - name: Publish the tested tarball
+        # npm obtains a short-lived OIDC identity; no registry token is stored.
+        run: |
+          set -- artifacts/sasy-js-*.tgz
+          test "$#" -eq 1 && test -f "$1"
+          npm publish "$1" --access public --registry https://registry.npmjs.org

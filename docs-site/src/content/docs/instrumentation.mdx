@@ -1,0 +1,272 @@
+---
+title: Add a framework
+---
+
+An adapter has two jobs: **record how messages are produced, processed and passed**, and **check each action before the line of code that runs it**. The recorded messages and dependencies are the graph a policy reasons over; the reference monitor decides whether a proposed action may proceed. Recording an action after it happened enforces nothing. Terms used here are defined on the [concepts page](/concepts/).
+
+If you are using LangChain, Google ADK or Langroid, use the supplied adapter instead: this page is for adding a framework that has none.
+
+## Integrate once, reuse across agents
+
+An adapter connects a framework's shared message and dispatch methods to SASY. Build it once for a new framework or custom orchestration mechanism, then reuse it across agents using that mechanism. You do not need to rewrite it for each agent, prompt, or tool definition. Each application still configures credentials, policies and session boundaries, and covers any custom paths outside those shared methods.
+
+To add an adapter:
+
+1. Identify the methods that produce, process and pass messages, including model calls, tool handlers and delegation. Resolve the actual input snapshots to immutable message IDs before dispatch.
+2. Record those messages and their dependencies in the active session. Preserve structured tool calls even when a response has no text.
+3. Find every action-dispatch site and check the exact outgoing action with its input IDs before execution. Carry decisions back to the framework and stop on denial or failure.
+4. Verify the dependency graph and exercise allowed, denied, error and concurrent paths. Add coverage whenever a framework upgrade or custom override introduces a new path.
+
+The sections below describe the contract these hooks must implement.
+
+## The core contract
+
+Treat framework methods as computations from input messages to output messages. Record the actual messages and connect each input to the output that used it: `input → output`. A dependency means “this computation consumed that input,” not simply “these events happened next to each other.”
+
+| Framework operation | Inputs | Output |
+|---|---|---|
+| LLM call | The list of messages sent to the model, including supplied context | The model's response, with any structured tool-call specifications |
+| Tool-call handler | The message containing the selected tool call, plus any additional message inputs the handler consumes | A message containing the tool's actual return value and its originating tool specification |
+| Parser, formatter or summarizer | The messages being processed | The derived message |
+| Agent delegation or message forwarding | The messages passed to the receiving agent | The receiving message or subsequent result, retaining its input dependencies |
+
+Observe all methods that produce, process or pass these messages, including application-owned wrappers around a framework. Preserve an existing message ID when passing the same observation; give a newly derived message a new ID. Keep parallel calls and subagents connected to their actual inputs. If a method consumes additional context, include that context rather than linking only the most recent message.
+
+## A tool-call handler
+
+This framework-neutral pseudocode shows the order of operations. `observe` and `require_allow` stand for your adapter's SDK calls; they are not SDK function names. Inputs have already been recorded in the active session.
+
+```python
+def handle_tool_call(input_message, tool_call):
+    inputs = [input_message.id]
+    require_allow(tool_action(tool_call), input_ids=inputs)
+    value = dispatch_tool(tool_call)
+    output = tool_result_message(value, derived_from=tool_call)
+    observe(output, input_ids=inputs)
+    return output
+```
+
+The checked name and arguments must describe the call that is actually dispatched. Place the check where execution occurs, including alternate dispatch paths, retries and delegated calls. Only an allow decision may reach `dispatch_tool`. A denial, an approval request, or an unavailable engine must stop this path; an approval suggestion is not itself authorization. Apply required transforms through a supported adapter before dispatch, or stop if the adapter cannot apply them.
+
+Record a tool exception as an error outcome, not a successful result. If the call is denied, report the denial to the framework instead of manufacturing a tool return value.
+
+## An LLM call
+
+The model consumes the whole supplied message list, so its reply depends on every message in that list. A reply that proposes a tool call is still a message; it is not permission to execute the call.
+
+```python
+def call_model(messages):
+    inputs = [message.id for message in messages]
+    require_allow(model_request(messages), input_ids=inputs)
+    response = dispatch_model_request(messages)
+    observe(response, input_ids=inputs)
+    return response
+```
+
+Represent the outgoing model request using the action vocabulary your policy and adapter agree on, such as its HTTP request. The check belongs at that outgoing dispatch site. If a framework adapter already mediates it, preserve that mediation. The later tool dispatch needs its own check against the selected tool and arguments.
+
+## Connect the contract to the SDK
+
+For one message at a time, `sasy.record(text, role=..., inputs=[...])` records a
+new immutable version with its input edges and returns its ID; it builds on
+`resolve_events`, described below. In Python,
+`sasy.observability.record_events_with_dependencies(events, edges)` records messages and edges atomically. `Event.tools` carries tool-call specifications in an input message; `Event.derived_from` identifies the tool behind a result. `Event.metadata` is an optional free-form string of your own, described below. An `Edge(source=input_id, destination=output_id)` records the dependency. The authenticated writer is stamped by the server; message roles and caller-supplied actor labels are not authentication credentials.
+
+### What goes in the text, and what goes in the metadata
+
+An adapter has to make one guarantee about every message it records: an edit to the message is an edit the engine can see. The engine's content hash — the digest that decides whether a message handed back later is the message that was recorded — is taken over the whole event. Whatever you put in the event is protected by it; whatever you leave out can be changed without the recorded node changing, so a compact reference to that node would still verify after the edit.
+
+That gives a rule with two halves:
+
+- **The text is what policies read.** Put the message's content there, spelled the way a rule would expect to match it: a string as it stands, a structured body as one JSON string. A tool call's arguments follow the same rule. Two different messages are allowed to share a text.
+- **`metadata` is everything else whose edit must be visible.** Put there a record of the whole source message — every field the framework carries, not only the fields a provider is known to read — encoded so that only that message can produce it. The server stores the string verbatim, returns it verbatim and never interprets it; it is simply part of what the hash covers. A policy can read it, through the `MessageMetadata(id, metadata)` relation, so it is worth writing the record in a form a rule can address — which is what the supplied adapters' canonical JSON is. See [policy language](/policy-language/) for the relation.
+
+An event with no `metadata` hashes exactly as it did before the field existed, so an adapter that does not need it can leave it unset.
+
+Encoding the record is the part worth care. A framework's own JSON dump is usually lossy — it typically writes bytes and the string they decode to alike, a tuple and a set as one list, and every dict key as a string — and each loss is two different messages sharing one node and one mark. The supplied [LangChain](/integrations/langchain/#what-a-node-holds) and [ADK](/integrations/google-adk/#what-a-record-holds) adapters encode the dump by type, with a wrapper per type and a prefix per key kind, and stop the run on a type the encoding does not know rather than writing it down as something else. Either follow that shape or use an encoding of your framework's own that is injective for the same reason.
+
+For tool actions, `sasy.check_tool_call(name, args_json, input_node_ids=[...])` returns the decision. The TypeScript SDK exposes `registerEventsWithDependencies` and `checkToolCall`; call these methods on the object returned by `sasy.session(sessionId)` to supply the session scope. Unlike Python's context manager, creating a TypeScript session does not set ambient scope for top-level SDK calls. Bind the policy and keep recording and checking inside the same session; register input observations before checking an action that depends on them. HTTP forwarding uses the reference-monitor proxy API. See [configuration](/configuration/) for connection and session setup and [policy language](/policy-language/) for the request facts these operations produce.
+
+For a runnable implementation, see the [message-flow example](https://github.com/sasy-labs/sasy/tree/main/examples/message-flow). It records synthetic context, checks a proposed send through the real engine, and dispatches only the allowed case. It needs no model-provider credentials.
+
+## Immutable message versions
+
+Use `sasy.observability.resolve_events` (or `resolve_events_async`) to register
+complete message snapshots. The TypeScript equivalent is `resolveEvents`, also
+available on a `Session`. Send the actual consumed inputs together, then use the
+returned IDs in the action check and the output's dependency edges.
+
+A framework message's `event.id` is a stable **origin**, distinct from its
+server-returned version ID. Use a fresh origin for each new message-producing
+computation, even when two outputs contain identical text. Resolving an unchanged
+snapshot returns the same version, including after a server restart. It creates
+no new graph writes or synchronization events.
+
+```python
+from sasy.observability import resolve_events
+from sasy.proto.observability_pb2 import Edge, Event, EventSnapshot
+
+# Inside an active sasy.session(...).
+original = Event(id="user-message-1", text="Draft for internal review")
+[first] = resolve_events([EventSnapshot(event=original)])
+
+# A later call checks the current content and sends a compact reference.
+[unchanged] = resolve_events([EventSnapshot(
+    event=original, base_id=first, reuse_dependencies=True,
+)])
+assert unchanged == first
+
+# An observed editing operation read the original and produced this revision.
+[edited] = resolve_events([EventSnapshot(
+    event=Event(id=original.id, text="Revised draft for internal review"),
+    base_id=first,
+    dependencies=[Edge(source=first, destination=original.id)],
+)])
+```
+
+Unchanged inputs use compact references by default: the SDK still reads the full
+current message, but sends its origin, immutable version ID and a content digest.
+New messages and explicit edits send full contents and complete dependencies.
+Mixed batches resolve atomically; a missing version or mismatched digest rejects
+the batch without creating replacement IDs or graph updates. A version must be
+registered before an action can use it.
+
+The SDKs cache at most 4,096 successful capture fingerprints. They retain no raw
+message bodies in this cache, and recheck the current fields on every call. An
+exact match can reuse the captured digest; changes or eviction run credential
+capture again. Cache loss affects performance, not version identity or history.
+Content digests cover the captured event fields; version IDs also distinguish
+origins and dependencies. Identical content does not merge distinct computations.
+
+This path requires an engine with `ResolveSnapshots`; an older engine fails
+explicitly. Upgrade the engine before its clients. For comparison or compatibility,
+Python accepts `resolve_events(snapshots, compact=False)` and TypeScript accepts
+`resolveEvents(snapshots, sessionId, { compact: false })` (or
+`session.resolveEvents(snapshots, { compact: false })`). This resends full snapshots
+through `ResolveEvents` and disables the SDK capture cache; it does not relax
+provenance checks.
+
+For a mutation, provide its complete contents and incoming dependencies.
+Omitted fields are removed, and an empty dependency list means no inputs.
+`base_id` identifies the version being revised; it does not automatically add
+an edge or copy tool-execution evidence. An edit that reads the old message
+should depend on that version and every other input the edit consumed. Existing
+outputs keep their original dependencies. A changed hash alone cannot establish
+what caused an edit; `reuse_dependencies=True` rejects changed contents.
+
+Dependency sources must be immutable version IDs or origins submitted in the
+same atomic batch. Do not attach new dependencies later with the legacy APIs.
+`record_events` and `record_events_with_dependencies` remain available with their
+existing merge semantics, but cannot overwrite immutable versions or change
+their incoming dependencies. Legacy mutable messages need explicit migration
+before they can be inputs to immutable observations.
+
+Version comparison covers the transmitted event fields and dependencies, after
+credential capture sanitization. Framework-only metadata and redacted values
+are not additional graph facts. Keep batches below the engine's 16 MiB RPC
+limit, and finish resolving all required inputs before dispatching an action.
+
+## Supplied Python adapters
+
+| Framework | Extra | `sasy.instrument()` argument |
+| --- | --- | --- |
+| [LangChain](/integrations/langchain/) | `langchain` | `langchain` |
+| [Google ADK](/integrations/google-adk/) | `adk` | `adk` |
+| [Langroid](/integrations/langroid/) | `langroid` | `langroid` |
+
+Call `sasy.instrument()` once at startup, after any explicit `sasy.configure(...)` and before
+you build any agent. Each framework argument takes one of three values:
+
+- Left out (`None`): enable the adapter if the framework is installed, and do
+  nothing if it is not.
+- `True`: enable the adapter, and raise an error if the framework is not
+  installed.
+- `False`: skip the framework.
+
+So `sasy.instrument()` with no arguments enables every supplied adapter whose
+framework is installed. It does not enable the [HTTP hooks](#http-hooks) below;
+those are off unless you pass `http=True`.
+
+A framework can be installed but unusable by its adapter: LangChain or Google
+ADK at a version its adapter does not support, or any of the three frameworks
+at a version its adapter cannot import. What happens then depends on the
+framework's argument:
+
+- Left out (`None`): `sasy.instrument()` skips that framework and says
+  nothing yet. The first time the application uses the framework, SASY issues a
+  `SasyInstrumentationWarning` (a Python warning class exported from
+  `sasy.instrumentation`; the same message is also logged). It is issued once
+  per process and points at the line of your code that used the framework. An
+  application that has the framework installed but never uses it gets no
+  warning. The message gives the reason and says that the framework's agents
+  will NOT be checked by SASY. It then tells you how to act: pass `True` for
+  that framework to make this an error, or `False` if your application does
+  not use it, which also silences the warning.
+
+  "Uses" means calling one of the framework's public entry points, which SASY
+  wraps only to issue the warning and otherwise leaves unchanged:
+  `langchain.agents.create_agent` or running any LangGraph graph (`invoke`,
+  `ainvoke`, `stream`, `astream`); `run`, `run_async` or `run_live` on a
+  Google ADK `Runner`; `run` or `run_async` on a Langroid `Task`, or an LLM
+  response from a Langroid `ChatAgent` (`llm_response`, `llm_response_messages`
+  and their async forms). If even these entry points cannot be loaded (for
+  example a broken install), the warning is issued by `sasy.instrument()`
+  itself.
+- `True`: `sasy.instrument()` raises an error before it changes anything. The
+  message names the argument to set to `False` if your application does not
+  use that framework.
+- `False`: the framework is skipped with no warning.
+
+A framework that is not installed at all is skipped silently when its argument
+is left out. The Langroid adapter does not check the installed version. The
+changes `sasy.instrument()` makes cannot be undone, and calling it again is
+harmless.
+
+To turn the warning into an error for every framework at once, use Python's
+standard warning filter, for example
+`warnings.simplefilter("error", sasy.instrumentation.SasyInstrumentationWarning)`.
+The error is then raised at the first use of the framework, not by
+`sasy.instrument()`; pass the framework's argument as `True` to fail at
+start-up instead.
+
+The `langchain` argument also counts LangGraph as installed, since LangGraph
+does not need the `langchain` package. With LangGraph alone, the adapter cannot
+load: `sasy.instrument()` warns that LangChain and LangGraph agents will not be
+checked, or raises with `langchain=True`. Install the `langchain` extra, or
+pass `langchain=False`.
+
+If your own adapter covers a LangGraph graph that runs tools through a
+`ToolNode`, pass `langchain=False`. With the LangChain adapter enabled, inside
+a SASY session tools run only in agents SASY builds: every tool call of a
+`ToolNode` that SASY did not build is refused; see [tools SASY does not protect](/integrations/langchain/#tools-sasy-does-not-protect).
+
+The base SDK installs no agent framework. Use it to record messages and check
+actions directly, or with the HTTP hooks below.
+
+### HTTP hooks
+
+The HTTP hooks patch `httpx` and `requests` so that outbound requests go
+through the reference monitor as actions your policy can allow or deny. They
+are off by default; `sasy.instrument(http=True)` enables them. Enable them when
+you need credential injection (the reference monitor adding an API key the
+engine holds to a request) or want the policy to check the agent's outbound
+requests. The policy must then allow each host the agent calls, including the
+model provider's. To enable only the HTTP hooks, alongside your own adapter,
+call `sasy.instrument(http=True, langchain=False, adk=False, langroid=False)`.
+The hooks
+deliberately let `localhost`, `127.0.0.1` and `::1` through without a check, and
+they do not
+cover other networking libraries or anything your code runs locally. Credential
+transforms on HTTP requests are applied by the reference-monitor proxy.
+
+### Validating your adapter
+
+Run a small conversation and check the stored input and output edges. Exercise
+an allowed dispatch, a denied one, a tool error, concurrent calls and an engine
+that is unreachable. Simulate a failed recording too: a protected call must not
+proceed when the messages its policy needs were never recorded. Check the
+synchronous and asynchronous paths separately where the framework has both.
+
+## Captured content
+
+A recorded message goes to the graph as it is: the text of an event, its metadata and a tool call's arguments are not rewritten. They are what a policy reads, and the reference monitor is handed the same bytes when it decides, so a rule reading an ancestor's contents reads what the action carried. Recognized transport credentials are still removed where transport metadata appears — span attributes, SDK diagnostic logs, and the URLs and feedback text the HTTP hooks record — because no policy decides on those. The graph therefore holds the conversation as it happened and is sensitive: protect it as a store. Capture-budget failures stop before the observation RPC; do not proceed with a protected action whose required observations were not recorded. See [current limits](/limits/).

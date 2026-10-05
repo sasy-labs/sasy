@@ -1,0 +1,9 @@
+{
+  "name": "sasy",
+  "version": "0.1.0",
+  "description": "Set up SASY, run its example demos, protect agents with it (LangChain, Google ADK, Langroid or your own loop), and explain why an action was blocked",
+  "author": {
+    "name": "Sasy, Inc."
+  },
+  "repository": "https://github.com/sasy-labs/sasy"
+}

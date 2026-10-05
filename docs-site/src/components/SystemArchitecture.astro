@@ -1,0 +1,13 @@
+<figure class="architecture">
+  <a class="diagram-link" href="/diagrams/architecture.svg" aria-label="Open the full-size system architecture diagram">
+    <img src="/diagrams/architecture.svg" width="1163" height="595" alt="SASY instrumentation connects an agent to its tools and services, records messages and dependencies in the engine's dependency graph, and checks proposed actions against developer policies. Allowed calls execute; denied calls return a reason to the agent." />
+  </a>
+  <figcaption>SASY instrumentation records inputs, checks actions with the policy engine, and dispatches allowed calls. The policy engine evaluates developer rules over the action and its relevant history.</figcaption>
+</figure>
+<style>
+  .architecture { margin:1.5rem auto; max-width:100%; }
+  .diagram-link { display:block; border:1px solid var(--sl-color-gray-5); border-radius:12px; background:white; }
+  .diagram-link:focus-visible { outline:3px solid var(--sl-color-text-accent); outline-offset:3px; }
+  .diagram-link img { display:block; width:100%; max-width:100%; height:auto; margin:0; }
+  .architecture figcaption { margin-top:.65rem; color:var(--sl-color-gray-2); font-size:.875rem; line-height:1.5; }
+</style>

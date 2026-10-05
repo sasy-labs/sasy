@@ -1,0 +1,9 @@
+trust_domain: sasy.local
+default_tenant: default
+entities:
+  client:
+    roles: [reference-monitor-user, observability-writer, observability-reader]
+  admin:
+    roles: [admin, reference-monitor-user, observability-writer, observability-reader]
+  policy-engine:
+    roles: [observability-reader]

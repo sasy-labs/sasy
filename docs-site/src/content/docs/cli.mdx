@@ -1,0 +1,106 @@
+---
+title: Engine CLI
+description: Local Docker engine launcher options and the core sasy serve command.
+---
+
+## Local engine commands
+
+The Python SDK provides `sasy engine start`, `sasy engine status`, and
+`sasy engine stop`. These launch and manage a local Docker engine and saved
+client profiles. They are distinct from the Rust binary's `sasy serve` command.
+See [local engine setup](/local-engine/) for the profile layout and examples.
+
+| `engine start` option | Default | Purpose |
+| --- | --- | --- |
+| `--profile NAME` | Selected profile, or `local` | Create/use a named profile under `~/.sasy/profiles/` and select it for SDK fallback. `SASY_ENGINE_PROFILE` also selects a profile. |
+| `--name NAME` | `sasy-engine` for `local`; `sasy-engine-PROFILE` otherwise | Docker container name; saved settings are reused on subsequent starts. |
+| `--port PORT` | `10089` initially | Host loopback port mapped to container port `10089`. |
+| `--volume NAME` | `CONTAINER-data` initially | Persistent Docker volume for engine credentials, certificates, and graph data. |
+| `--image IMAGE` | Saved image, otherwise `ghcr.io/sasy-labs/sasy:VERSION` | Override the image. For a new profile, `SASY_ENGINE_IMAGE` overrides the SDK-version default. |
+| `--timeout SECONDS` | `120` | Deadline for verified TLS readiness. |
+| `--env-file PATH` | No project file | Also write client settings to the chosen dotenv file; preserve existing values and report conflicts. |
+| `--client-entity NAME` | `client` on first initialization | Authenticated entity for the generated client key. |
+| `--admin-entity NAME` | `admin` on first initialization | Authenticated entity for the separate generated admin key. |
+| `--tenant NAME` | `default` on first initialization | Tenant assigned by the engine to the generated identities. |
+| `--trust-domain NAME` | `sasy.local` on first initialization | Trust-domain value in the generated role configuration. |
+
+Identity options initialize a new volume. Conflicting settings on an existing
+volume are rejected; they do not rotate keys or change roles. Profile files are
+private to your user, and the selected profile is available across project
+working directories. `engine status` and `engine stop` accept `--profile` and
+`--name` to choose the engine; stopping preserves its volume.
+
+The launcher does not configure arbitrary authentication providers or forward
+all server options. Use the Rust binary directly for JWT/JWKS, mTLS, provider
+chains, custom role mappings, and other deployment settings. Set `SASY_BIN` to
+the downloaded or built Rust executable, rather than the Python SDK command:
+
+```bash
+SASY_BIN=/path/to/engine/sasy
+"$SASY_BIN" serve \
+  --addr 127.0.0.1:10089 \
+  --auth-provider config/auth/apikey.json \
+  --auth-config config/auth_config.yaml \
+  --tls-cert certs/server.crt \
+  --tls-key certs/server.key \
+  --data-dir data/graph
+```
+
+Use `--tls-ca certs/client-ca.crt` when verifying client certificates. See
+[authentication](/authentication/) and [configuration](/configuration/) for
+provider and SDK settings, and run `"$SASY_BIN" serve --help` for the installed binary.
+
+## Engine server options
+
+Run `sasy serve [OPTIONS]` to start the engine. This table covers every `sasy serve` option. `--policy` is an alias of `--policy-metadata`; they are not separate settings for logic and metadata. A flag cannot enable a backend your build left out, and a [restricted engine](/building/#full-and-restricted-engines) serves only its baked profiles.
+
+See [configuration](/configuration/) for startup examples, [authentication](/authentication/) for identities and TLS, [environment](/environment/) for process variables, and [build the engine](/building/) for backend and toolchain requirements. CLI values override the corresponding environment variables.
+
+| Flag | Default | Purpose |
+| --- | --- | --- |
+| `--policy-metadata <FILE>` (alias `--policy`) | `unset` | One source-file option with two spellings. Soufflé backends compile/read this source and its annotations. With `--policy-plugin`, it supplies annotation metadata for that plugin instead. Restricted builds still serve only baked profiles. |
+| `--policy-plugin <FILE>` | `unset` | Trusted precompiled policy plugin (`.so`/`.dylib`); takes precedence over `--evaluator` in the full build and runs in the engine process. |
+| `--evaluator <BACKEND>` | `souffle` | `souffle`, `souffle-interpreted`, experimental external `flowlog`, or development `stub`. The stub backend allows actions; do not use it for enforcement. |
+| `--flowlog-bin <FILE>` | `unset` | Path to the external FlowLog evaluator IPC wrapper when selecting that backend. |
+| `--souffle-program <NAME>` | `policy_program` | Soufflé relation/program name answered by the evaluator. |
+| `--souffle-interpreted-bin <FILE>` | `souffle-interpreted` | Interpreted evaluator shim executable; required when selecting that backend. |
+| `--souffle-policy <FILE>` | `unset` | Policy `.dl` input for interpreted mode. |
+| `--souffle-functor-lib <FILE>` | `unset` | Explicit functor shared library for interpreted evaluation; otherwise the backend can compile its adapter library using the configured toolchain. |
+| `--auth-provider <FILE>` | `unset` | Authentication-provider JSON. Missing authentication refuses startup unless `SASY_ALLOW_NO_AUTH=1` explicitly enables local development without authentication. |
+| `--auth-config <FILE>` | `unset` | YAML mapping authenticated entities to roles and tenants. |
+| `--transforms <FILE>` | `unset` | JSON request-transform and credential-injection rules. |
+| `--addr <HOST:PORT>` | `127.0.0.1:10089` | gRPC listen address. |
+| `--proxy-port <PORT>` | `0` | Separate raw HTTP proxy port; `0` disables it. |
+| `--proxy-bind <ADDRESS>` | `127.0.0.1` | Raw proxy bind address. This listener does not authenticate callers; restrict network access. |
+| `--proxy-tenant <TENANT>` | `default` | Single tenant pinned to the raw proxy listener; this does not authenticate a caller. |
+| `--trust-proxy-headers` | `off` | Accept delegated `x-entity`/`x-roles` from authenticated callers without requiring their `service-proxy` role. Enable only behind a protected trusted proxy. |
+| `--tls-cert <FILE>` | `unset` | PEM server certificate; together with `--tls-key`, enables TLS. |
+| `--tls-key <FILE>` | `unset` | PEM server private key; pair with `--tls-cert`. |
+| `--tls-ca <FILE>` | `unset` | CA for verifying client certificates (mTLS). Configure the authentication provider to map those certificates to identities. |
+| `--data-dir <DIR>` | `data/graph` | Graph and engine state directory, resolved relative to the startup working directory. |
+| `--credential-backend <BACKEND>` | `sqlite` | `sqlite`, `memory`, or `openbao`. Memory seeds credentials from the environment and shares them across tenants. |
+| `--credentials-db <FILE>` | `<data-dir>/credentials.db` | SQLite credential database; other backends do not use this file. |
+| `--credentials-env-file <FILE>` | `unset` | Additional memory-backend credentials; file values override the environment. Other backends warn and ignore this option. |
+| `--openbao-addr <URL>` | `unset` | Required OpenBao URL for the `openbao` backend; HTTPS unless loopback. |
+| `--openbao-mount <NAME>` | `secret` | OpenBao KV v2 mount. |
+| `--openbao-path-prefix <PATH>` | `sasy` | Lookup prefix; credential paths append tenant/entity/service. |
+| `--openbao-namespace <NAME>` | `unset` | OpenBao namespace header. |
+| `--openbao-token-file <FILE>` | `unset` | Token file; use this or the AppRole pair, not both. |
+| `--openbao-approle-role-id <ID>` | `unset` | AppRole role identifier; pair with the secret-ID file. |
+| `--openbao-approle-secret-id-file <FILE>` | `unset` | AppRole secret-ID file. |
+| `--openbao-ca-cert <FILE>` | `unset` | PEM CA for a private OpenBao server certificate. |
+| `--openbao-cache-ttl-secs <N>` | `60` | Credential read-cache TTL in seconds. |
+| `--openbao-timeout-secs <N>` | `5` | OpenBao request timeout in seconds. |
+| `--query-timeout-secs <N>` | `10` | Fail-closed answer deadline in seconds; must be positive. The evaluator may finish in-flight work after a refused request. |
+| `--evaluator-stall-secs <N>` | `60` | Kill/restart threshold for an evaluator owing a reply; must be at least the query deadline. |
+| `--oracle-redaction <on\|off>` | `on` | Scrub recognized secret shapes in oracle question/context strings. Does not redact stored graph data or the agent’s own model requests. |
+| `--neo4j-uri <URI>` | `unset` | Enable the optional background graph mirror at this Neo4j URI. |
+| `--neo4j-username <NAME>` | `neo4j` | Neo4j mirror username. |
+| `--neo4j-password <VALUE>` | `observability` | Neo4j mirror password; replace the development default when using a shared server. Command-line values can appear in process listings. |
+| `--neo4j-database <NAME>` | `neo4j` | Neo4j mirror database. |
+| `--allow-user-functors[=<VALUE>]` | `off` | Non-admin native functor admission: bare flag or `sandboxed` requires working confinement; `unsandboxed` explicitly permits unconfined development execution. Admin functors remain native code. |
+| `--help` | `—` | Print help; `-h` prints a shorter summary. |
+
+The raw proxy has a separate, limited HTTP contract described in [configuration](/configuration/#raw-forward-proxy). It does not inherit per-request gRPC authentication.
+
+Other full-engine commands are `sasy init-credentials [--credentials-db FILE] [--env-file FILE]` to initialize/seed SQLite credentials, and `sasy install-assets DIR` to materialize the six embedded compile-chain assets. `init-credentials` defaults to `data/graph/credentials.db`, the file `serve` uses with its default `--data-dir`; see [building](/building/) before selecting an asset override. `install-assets` requires a compiler-enabled build.

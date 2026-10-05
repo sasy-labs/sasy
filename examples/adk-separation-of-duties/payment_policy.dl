@@ -1,0 +1,33 @@
+// Application-assigned agent labels demonstrate role separation, not separate
+// authenticated humans. Every approval is bound to the whole payment tuple.
+.decl ApprovedPayment(request_id: symbol, payee: symbol, amount: symbol)
+ApprovedPayment(request_id, payee, amount) :-
+    CurrentDepends(approval),
+    ToolResult(approval, "approve_payment", approved_args),
+    SentMessage(approval, approved_message),
+    approved_message.agent = "reviewer",
+    CurrentDepends(request),
+    ToolResult(request, "submit_payment", requested_args),
+    SentMessage(request, requested_message),
+    requested_message.agent = "requester",
+    request_id = @json_get_str(approved_args, "request_id"),
+    payee = @json_get_str(approved_args, "payee"),
+    amount = @json_get_str(approved_args, "amount"),
+    request_id = @json_get_str(requested_args, "request_id"),
+    payee = @json_get_str(requested_args, "payee"),
+    amount = @json_get_str(requested_args, "amount").
+
+IsAuthorized(idx) :- Actions(idx, a), IsTool(a, "submit_payment").
+IsAuthorized(idx) :- Actions(idx, a), IsTool(a, "approve_payment").
+// @deny_message: This call's history has no request from the requester and approval from the reviewer that match its request ID, payee and amount.
+// @tool_pattern: disburse_payment
+IsAuthorized(idx) :-
+    Actions(idx, a),
+    a = $CallTool("disburse_payment", args),
+    ApprovedPayment(@json_get_str(args, "request_id"),
+                    @json_get_str(args, "payee"),
+                    @json_get_str(args, "amount")).
+IsAuthorized(idx) :- Actions(idx, a), QueriesHost(a, "generativelanguage.googleapis.com").
+
+// Optional speed-up: only a disbursement needs its ancestry, so skip the walk for other tools.
+CurrentDependsPolicyRelevant() :- IsTool(_, "disburse_payment").

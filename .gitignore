@@ -1,0 +1,26 @@
+.env
+.env.*
+certs/
+data/
+.venv/
+**/__pycache__/
+**/node_modules/
+**/target/
+**/dist/
+*.sst
+*.db
+*.db-wal
+*.db-shm
+**/server-data/
+sdk/typescript/src/generated/
+config/auth/apikey.json
+config/auth/jwt.json
+config/auth_config.yaml
+config/transforms.json
+docs-site/.astro/
+souffle/souffle-interpreted
+souffle/libfunctors.so
+souffle/libfunctors.dylib
+
+# Per-checkout Nix development profile and garbage-collection root.
+/.nix/

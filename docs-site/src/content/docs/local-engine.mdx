@@ -1,0 +1,237 @@
+---
+title: Start a local engine
+description: Run the engine in Docker with one command and connect your agent.
+---
+
+Keep an engine running while you build and test your agent. The Docker image
+includes the engine and its policy compiler; the Python SDK runs on your host.
+For a native engine, see [build from source](/building/).
+
+## Start the engine
+
+You need a running Docker (Docker Desktop, Colima or OrbStack) and the SDK
+installed as shown in the [quick start](/get-started/). No checkout of the SASY repository
+is needed:
+
+```bash
+sasy engine start
+```
+
+Without the SDK installed, `uvx sasy engine start` runs the same command; it
+needs [uv](https://docs.astral.sh/uv/) and a running Docker.
+
+On first start, the engine image creates independent random client and admin
+API keys, role and transform configuration, and a private CA with a `localhost`
+server certificate, all in a Docker volume (`sasy-engine-data`). Later starts
+reuse them and the engine's stored data. The engine listens on
+`127.0.0.1:10089` only. Startup returns after verifying a TLS connection against
+its generated CA. No pre-existing SASY credential is required; authentication
+is enabled, using the generated keys.
+
+The command saves the client connection settings in
+`~/.sasy/profiles/local/profile.json`, with the CA certificate alongside it as
+`ca-SHA256.crt`, where `SHA256` is the certificate content hash. `~/.sasy/selected-profile` selects that profile for the Python
+SDK. Directories are private to your user (mode `0700`), and files are
+owner-readable and writable (`0600`). The admin key and server private keys
+stay in the Docker volume; API keys are not printed. No project files are
+written by default.
+
+```bash
+sasy engine status   # running state and port of the selected engine
+sasy engine stop     # stop it; retain the volume and its data
+```
+
+The SDK command and the engine binary are both named `sasy`: the SDK runs
+`sasy engine start` on your host, while the binary runs `sasy serve` inside the
+container. The engine starts with deny-all behavior until an application binds
+a policy; it does not load or run an example.
+
+## Named profiles and custom settings
+
+A profile is a saved endpoint, client credential, CA and Docker configuration.
+It selects an engine connection, not a session. One engine supports many
+concurrent sessions, so projects do not need separate profiles to run independent
+agent tasks. Named profiles are optional, useful when switching between engine
+instances or connection settings.
+
+The command uses `--profile`, then `SASY_ENGINE_PROFILE`, then the selected
+profile; without any of these it creates `local`. Starting a profile selects
+it for subsequent SDK use. For a separate engine:
+
+```bash
+sasy engine start --profile research --port 10090 \
+  --client-entity research-client --admin-entity research-admin \
+  --tenant research --trust-domain sasy.local
+sasy engine status --profile research
+sasy engine stop --profile research
+```
+
+The `research` profile defaults to container `sasy-engine-research` and volume
+`sasy-engine-research-data`. The `local` profile retains container `sasy-engine`
+and volume `sasy-engine-data`. Repeat starts reuse saved Docker settings.
+Use `--name`, `--volume`, or `--image` to customize those settings; see the
+[CLI reference](/cli/#local-engine-commands) for all options.
+
+The generated identities default to `client` and `admin`, both in tenant
+`default`, with trust domain `sasy.local`. Identity options apply on first
+initialization. A request conflicting with the volume's stored identity
+configuration fails instead of changing identities or rotating credentials.
+Create a fresh volume when you need a different initial configuration.
+[Authentication](/authentication/) explains roles, tenants, and remote providers.
+
+All applications using the same profile authenticate as its client principal.
+Sessions distinguish executions; they do not create separate authenticated
+principals or tenants. Separate named profiles with their own volumes provide
+separate local engines. Giving two profiles the same volume shares engine data
+and credentials.
+
+To write project-specific connection settings as well, opt in:
+
+```bash
+sasy engine start --profile local --env-file .env
+```
+
+This writes missing `SASY_URL`, `SASY_API_KEY`, and `TLS_CA_PATH` values while
+preserving existing entries. The command reports conflicting retained settings;
+update those values before using that file. Treat `.env` as a secret file and
+keep it out of version control.
+
+The default image is `ghcr.io/sasy-labs/sasy:VERSION`, matching the SDK version.
+The release workflow publishes the SDK only after native AMD64 and ARM64 images
+pass qualification and their exact version tag and qualified digests can be
+pulled without registry credentials. A private or incomplete image fails this
+gate before SDK publication.
+
+`--image` selects a different image; `SASY_ENGINE_IMAGE` supplies the initial
+default for a new profile. To reset an engine,
+stop it, remove its Docker volume, then start the same profile again. This
+replaces the profile with the new client settings; it also discards the old
+volume's graph data and credentials.
+
+### Without the SDK command
+
+The image initializes the same configuration when started directly:
+
+```bash
+docker run -d --rm --name sasy-engine -p 127.0.0.1:10089:10089 \
+  -v sasy-engine-data:/data ghcr.io/sasy-labs/sasy:0.5.0
+docker exec sasy-engine sasy local-init /data/local
+```
+
+The second command prints the client API key and CA certificate as JSON. Save
+the certificate to a file and set `SASY_URL=localhost:10089`, `SASY_API_KEY`,
+and `TLS_CA_PATH` yourself. This direct Docker path does not create a host profile.
+
+## Connect your agent from any project
+
+Run `python your_agent.py` in the environment where you installed SASY. The
+Python SDK falls back to the selected `~/.sasy` profile when no endpoint is
+configured through `sasy.configure()`, the environment, or the current
+working directory's `.env`. An explicit endpoint uses its own authentication
+and TLS settings; it never borrows the local profile's key or CA. Use
+`SASY_ENGINE_PROFILE=research` to select a profile for one process.
+See [client configuration](/configuration/#python-client-and-session-policy)
+for precedence and overrides.
+
+Each application binds its policy with `sasy.session(policy=...)`. The engine
+compiles and validates that policy; you do not need Soufflé or a C++ compiler
+on the host. The SDK uses your application's installed frameworks; check the
+integration guides for supported versions.
+
+## From a repository checkout
+
+Only the repository's examples need a checkout. From the repository root, the
+same command works through the workspace environment:
+
+```bash
+uv run sasy engine start
+```
+
+It selects the shared local profile; the included demos use that profile unless
+you configure project overrides. The make targets below are an alternative
+that keeps the engine's keys, certificates and data in the checkout instead
+of a Docker volume.
+
+### Make targets
+
+These need Make, OpenSSL and Python 3.11 or newer on the host.
+Pull the built GHCR image and start the engine in the foreground:
+
+```bash
+make docker-serve-ghcr
+```
+
+This target downloads the image for your architecture (ARM64 or x86-64), then
+uses the same local setup as `make docker-serve`. It does not build from source
+or require Nix on the host.
+
+The default image is `ghcr.io/sasy-labs/sasy:0.5.0`. Set `SASY_GHCR_IMAGE` to
+another release tag or digest to choose a different image. To build a modified
+engine locally, follow [build from source](/building/#docker).
+
+The run target creates local configuration and runs `make certs` before starting the engine.
+That target uses OpenSSL on your host to generate `certs/server.key` and a
+self-signed `certs/server.crt` for `localhost`. The engine uses the private key;
+the SDK trusts the certificate through `TLS_CA_PATH`. The demo does not generate
+a separate CA or need access to the private key.
+
+Setup fills in missing `SASY_URL`, `TLS_CA_PATH`, and `SASY_API_KEY` settings in the repository-root `.env`, using the **client** key
+from `config/auth/apikey.json`. A separate admin key stays in that auth file.
+Existing settings, keys, and certificates are preserved; `.env` is readable
+only by your user. API keys are not printed.
+
+The engine is ready when it logs `starting gRPC server`. Leave it running.
+It listens on your host's loopback interface and retains its graph in `data/`.
+The target mounts `config/` and `certs/` read-only, mounts `data/` for storage,
+and runs the container as your user so it can read the key and write data.
+These local files are ignored by Git and excluded from the image build.
+
+With `config/` mounted, the image serves that configuration instead of creating
+its own. Stop it with Ctrl-C and restart with `make docker-serve-ghcr` to reuse
+the same configuration and data.
+
+### Repository examples
+
+With an engine running, run the included examples from the repository root:
+
+```bash
+uv run examples/message-flow/demo.py
+```
+
+On first use, `uv run` creates `.venv` and installs the local SDK, supported
+frameworks, and model clients from the root workspace. Later runs update that
+environment as needed. No separate install or sync command is required.
+Live-model examples describe their provider credentials.
+
+**Next: [SDK usage patterns](/sdk/) or the [LangChain example](/examples/#langchain-information-flow).**
+
+## Troubleshooting
+
+- **`Docker is not running`.** Start Docker Desktop, or `colima start`, and run
+  `sasy engine start` again.
+- **`UNAUTHENTICATED` or a TLS error after recreating the volume.** Run
+  `sasy engine start` to refresh the profile. Remove or update stale exported
+  variables and project `.env` settings, which take precedence over profiles.
+- **Port 10089 is occupied.** Stop the old engine, then run
+  `sasy engine start --port 10090`, or create a separate profile on that port.
+- **An identity setting conflicts with existing state.** Reuse the original
+  identity settings or choose a fresh volume. Restarting does not rotate keys.
+- **The wrong engine is selected.** Run `sasy engine start --profile NAME`, or
+  set `SASY_ENGINE_PROFILE=NAME` for the application process.
+
+With the make targets:
+
+- **The engine rejects a key at startup.** `config/auth/apikey.json` still holds
+  the example keys from an older setup. Delete it and run `make init-config`.
+- **`UNAUTHENTICATED` from the SDK.** Its `SASY_API_KEY` must match the key
+  mapped to `client` in `config/auth/apikey.json`. If you regenerate the auth
+  file, update the existing key in `.env` too.
+- **A TLS error.** Use `localhost:10089` and the `certs/server.crt` created above.
+  Setup writes an absolute `TLS_CA_PATH`; update it if you move the checkout.
+- **Port 10089 is occupied.** Run `make docker-serve-ghcr SASY_DOCKER_PORT=10090`
+  and update `SASY_URL=localhost:10090` in `.env` if it already exists. Fresh
+  setup uses the selected port; existing values are never overwritten.
+
+This local setup runs policies you trust. For remote clients or policies from
+other authors, see [configuration](/configuration/) and the
+[security model](/limits/#trust-boundaries).

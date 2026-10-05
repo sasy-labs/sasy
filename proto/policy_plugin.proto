@@ -1,0 +1,77 @@
+syntax = "proto3";
+
+package policy_plugin;
+
+import "policy_engine.proto";
+
+// Wraps the check_authorization inputs for C ABI transport.
+message CheckAuthRequest {
+    repeated string current_node_ids = 1;
+    repeated policy_engine.Action actions = 2;
+    optional string entity = 3;
+    repeated string roles = 4;
+    // Session/conversation partition. The plugin scopes its
+    // evaluation to this session's tuples. Empty string selects
+    // the per-tenant global partition.
+    optional string session_id = 5;
+    // Auth-derived tenant. Empty string is treated as the
+    // deployment-level default tenant. Plugins that don't care
+    // about multi-tenancy can ignore this field.
+    optional string tenant = 6;
+    // Auth-derived principal (the connection's authenticated
+    // identity). Distinct from `entity` (user-supplied actor
+    // surfaced as `Entity(id)` in policies). Plugins use this
+    // to evaluate `HasPrincipal()` / `HasRole(...)`.
+    optional string principal = 7;
+}
+
+// Wraps graph updates for batch application over C ABI.
+message GraphUpdateBatch {
+    repeated GraphUpdateEntry updates = 1;
+}
+
+message GraphUpdateEntry {
+    oneof update_type {
+        NodeCreated node_created = 1;
+        string node_deleted = 2;
+        EdgeUpdate edge_created = 3;
+        EdgeUpdate edge_deleted = 4;
+    }
+}
+
+message NodeCreated {
+    string id = 1;
+    optional string content = 2;
+    optional string role = 3;
+    optional string agent = 4;
+    repeated ToolInfo tools = 5;
+    optional string entity = 6;
+    optional ToolInfo derived_from = 7;
+    // Session/conversation partition. Empty string selects the
+    // per-tenant global partition.
+    optional string session_id = 8;
+}
+
+message ToolInfo {
+    string name = 1;
+    string arguments = 2;
+}
+
+message EdgeUpdate {
+    string source = 1;
+    string destination = 2;
+    // Session/conversation partition for this edge.
+    optional string session_id = 3;
+    // Server-stamped principal (auth-derived) that asserted the edge.
+    optional string principal = 4;
+    // User-supplied actor the recording client named for the edge.
+    optional string entity = 5;
+}
+
+// Sync status returned by the plugin.
+message SyncStatusProto {
+    int64 current_sequence = 1;
+    uint64 node_count = 2;
+    uint64 edge_count = 3;
+    bool connected = 4;
+}

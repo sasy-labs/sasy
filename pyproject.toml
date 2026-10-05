@@ -1,0 +1,73 @@
+[project]
+name = "sasy-workspace"
+version = "0.0.0"
+requires-python = ">=3.11"
+# The repository workspace runs the examples; SDK consumers install sasy alone.
+dependencies = [
+  "sasy[all]", "openai>=1.106,<3", "langchain-openai==1.6.2", "python-dotenv>=1.0",
+]
+
+[project.optional-dependencies]
+# Retained aliases for existing workspace setup commands. The published SDK
+# keeps frameworks and model providers optional.
+all = ["sasy[all]", "openai>=1.106,<3", "langchain-openai==1.6.2"]
+langchain = ["sasy[langchain]"]
+adk = ["sasy[adk]"]
+langroid = ["sasy[langroid]"]
+otel = ["sasy[otel]"]
+openai = ["openai>=1.106,<3"]
+langchain-openai = ["langchain-openai==1.6.2"]
+
+[tool.uv]
+package = false
+
+[tool.uv.workspace]
+members = ["sdk/python"]
+
+[tool.uv.sources]
+sasy = { workspace = true }
+
+[dependency-groups]
+dev = [
+  "pytest>=8", "pytest-asyncio>=0.23", "pytest-timeout>=2", "grpcio-tools>=1.78", "python-dotenv>=1.0",
+  { include-group = "typing" },
+]
+typing = [
+  "mypy==2.3.1", "grpc-stubs==1.53.0.6",
+  "types-protobuf==7.35.1.20260906", "types-networkx==3.6.1.20260911",
+  "types-PyYAML==6.0.12.20260906", "types-requests==2.33.0.20260906",
+  "opentelemetry-sdk==1.42.1",
+]
+
+[tool.mypy]
+check_untyped_defs = true
+files = ["sdk/python/sasy"]
+python_version = "3.11"
+
+# These optional integrations are not installed by the SDK development gate.
+# Their SASY adapters are checked; only imports of the external packages are
+# treated as untyped. The OpenTelemetry adapter is checked with its SDK present.
+[[tool.mypy.overrides]]
+module = ["logfire", "logfire.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--strict-markers"
+markers = [
+  "integration: tests that start their own local engine (enable with --run-integration)",
+  "toolchain: policy compiler checks (enable with --run-toolchain)",
+  "linux_sandbox: requires Linux and bubblewrap",
+]
+asyncio_mode = "auto"
+
+[tool.ruff]
+required-version = "==0.16.6"
+line-length = 120
+exclude = ["*_pb2*.py", "*_pb2*.pyi"]
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I", "UP"]
+
+[tool.ruff.lint.per-file-ignores]
+"scripts/**" = ["E402", "E701", "F841"]

@@ -1,0 +1,78 @@
+// Toxic flow. Reading is unrestricted; what is refused is the combination an
+// injected instruction needs: a message sent outside the organization that was
+// computed from both untrusted content and a confidential document. Which
+// document is confidential, which is untrusted and which address is internal
+// are facts in this file: the program knows none of them.
+.decl FileLevel(path: symbol, level: number)
+FileLevel("public/memo.txt", 0).
+FileLevel("internal/merger-plan.txt", 2).
+FileLevel("inbox/xyz-disclosure.txt", 0).
+
+.decl Untrusted(path: symbol)
+Untrusted("inbox/xyz-disclosure.txt").
+
+.decl Internal(who: symbol)
+Internal("board@acme.example").
+Internal("manager@acme.example").
+
+// The documents the message being sent was computed from, however many agents
+// and summaries away they are.
+.decl ReadInDeps(path: symbol)
+ReadInDeps(path) :-
+    CurrentDepends(id),
+    ToolResult(id, "read_file", args),
+    path = @json_get_str(args, "path").
+
+.decl UntrustedInDeps()
+UntrustedInDeps() :- ReadInDeps(path), Untrusted(path).
+
+.decl ConfidentialInDeps()
+ConfidentialInDeps() :- ReadInDeps(path), FileLevel(path, level), level >= 2.
+
+IsAuthorized(idx) :- Actions(idx, a), IsTool(a, "read_file").
+
+IsAuthorized(idx) :-
+    Actions(idx, a),
+    IsTool(a, "send_email"),
+    a = $CallTool(_, args),
+    to = @json_get_str(args, "to"),
+    Internal(to).
+IsAuthorized(idx) :-
+    Actions(idx, a),
+    IsTool(a, "send_email"),
+    a = $CallTool(_, args),
+    to = @json_get_str(args, "to"),
+    !Internal(to),
+    !UntrustedInDeps().
+IsAuthorized(idx) :-
+    Actions(idx, a),
+    IsTool(a, "send_email"),
+    a = $CallTool(_, args),
+    to = @json_get_str(args, "to"),
+    !Internal(to),
+    !ConfidentialInDeps().
+
+// @deny_message: An external send computed from both untrusted content and a confidential document
+// @suggestion: Send to an internal recipient, or start a task that never read the untrusted document
+Unauthorized(idx) :-
+    Actions(idx, a),
+    IsTool(a, "send_email"),
+    a = $CallTool(_, args),
+    to = @json_get_str(args, "to"),
+    !Internal(to),
+    UntrustedInDeps(),
+    ConfidentialInDeps().
+
+// Langroid's own orchestration tools end a step or route a message between
+// agents. An allowlist that leaves them out stalls the task loop.
+IsAuthorized(idx) :- Actions(idx, a), IsTool(a, "done_tool").
+IsAuthorized(idx) :- Actions(idx, a), IsTool(a, "agent_done_tool").
+IsAuthorized(idx) :- Actions(idx, a), IsTool(a, "done_pass_tool").
+IsAuthorized(idx) :- Actions(idx, a), IsTool(a, "result_tool").
+IsAuthorized(idx) :- Actions(idx, a), IsTool(a, "pass_tool").
+IsAuthorized(idx) :- Actions(idx, a), IsTool(a, "send_tool").
+IsAuthorized(idx) :- Actions(idx, a), IsTool(a, "agent_send_tool").
+IsAuthorized(idx) :- Actions(idx, a), IsTool(a, "forward_tool").
+
+// Optional speed-up: only an email needs its ancestry, so skip the walk for other tools.
+CurrentDependsPolicyRelevant() :- IsTool(_, "send_email").

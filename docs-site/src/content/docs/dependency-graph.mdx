@@ -1,0 +1,153 @@
+---
+title: The dependency graph
+description: What SASY records about a conversation, and why a decision follows what a call was computed from rather than what happened earlier.
+---
+
+SASY decides about an action from the messages that action was computed from.
+This page explains what is recorded, how a rule reads it, and why the order of a
+conversation is not a substitute.
+
+## What is recorded
+
+**Message.** Anything your application records: a user input, a model output, a
+tool result. Each recorded message is a **node** in the session's **graph** and
+has an ID the engine assigns. **Record** means to send a message, or a dependency
+between messages, to the engine so a policy can see it. The SDK functions are
+`record_events`, `resolve_events` and their async variants; an adapter for your
+framework calls them for you.
+
+**Dependency (edge).** A recorded statement that the computation producing
+message B consumed message A: "B depends on A". It captures possible influence;
+it does not claim which words the model used. A model output depends on every message in the
+request the model was given. A tool result depends on the model output that
+asked for the tool.
+
+**Ancestry.** Everything a message was computed from, directly or through other
+messages: the whole chain backwards. *Provenance* means the same thing; this site
+says ancestry.
+
+**Evidence of a successful tool result.** A `ToolResult` fact. The engine has
+one only for a tool that actually ran and returned without raising an error, so a
+rule that requires `ToolResult(id, "approve", _)` cannot be satisfied by a call
+that was denied, failed or was merely proposed.
+
+**Message version.** Re-recording an unchanged message returns the same ID and
+stores nothing new. Editing it produces a new node. This matters to adapter
+authors; see [add a framework](/instrumentation/).
+
+## How a decision uses the graph
+
+Before an action runs, the application asks the engine "may I do this?", naming
+the action, its arguments and the IDs of the messages the action was computed
+from. In a policy those IDs are `Current(id)`, and `CurrentDepends(id)` is every
+message they depend on, directly or indirectly: the ancestry of the call.
+
+An agent has four tools: `read_public`, `read_confidential`, `draft_summary` and
+`publish`.
+
+```text
+Run A   read_public       → draft_summary → publish(external)   ALLOW
+Run B   read_confidential → draft_summary → publish(external)   DENY
+        "External publication depends on confidential information"
+Run B'  read_confidential → draft_summary → publish(internal)   ALLOW
+```
+
+In run B the draft no longer contains the confidential wording. The policy
+still restricts publication of outputs derived from confidential context. SASY
+denies it because the `publish` call
+depends on the draft, the draft depends on the model output that read the
+confidential document, and the policy says:
+
+```prolog
+ConfidentialInput() :- CurrentDepends(id), ToolResult(id, "read_confidential", _).
+
+// @deny_message: External publication depends on confidential information
+Unauthorized(idx) :-
+    Actions(idx, a),
+    IsTool(a, "publish"),
+    a = $CallTool(_, args),
+    @json_get_str(args, "destination") = "external",
+    ConfidentialInput().
+```
+
+This is
+[examples/langchain-information-flow](https://github.com/sasy-labs/sasy/tree/main/examples/langchain-information-flow):
+a real LangChain agent with a scripted model, so it needs no provider key.
+
+## Why not the order of the conversation
+
+A conversation looks like a list: first this message, then that one. It is
+tempting to write rules over that list, such as "deny `publish` if a confidential
+read happened earlier in the session". But "earlier" is not "computed from".
+The messages of a session are only partly ordered: some depend on each other,
+and many do not, even though one was recorded before the other.
+
+```text
+                     ┌─ calendar agent: check slots → create event ─┐
+user → supervisor ───┤                                               ├─ supervisor: answer
+                     └─ email agent:    read confidential → send ────┘
+```
+
+The two sub-agents run side by side. The calendar agent's `create event` was
+recorded after the email agent's confidential read, but it was not computed from
+it. The same happens without any parallelism: a second task started in the same
+session, from a new user message, depends on nothing from the first. What counts
+is always what a message was computed from, all the way back. A model call that
+is given only the last three messages depends on those three and on everything
+they were computed from, so trimming a conversation does not shed an earlier
+confidential read that those messages descend from.
+
+A rule over session order gets this wrong in both directions.
+
+- **It blocks what it should allow.** Once anything confidential has been read,
+  every later external action in the session is denied, including ones that never
+  saw it. People respond by weakening the rule.
+- **It can accept unrelated evidence.** An approval elsewhere in the session
+  may concern a different payment. Require an approval in this action's ancestry
+  **and** match the request ID, payee, and amount. Ancestry alone is insufficient:
+  an earlier approval can also be an ancestor of a later, different payment.
+  The [ADK example](/integrations/google-adk/#payment-example) shows the matching
+  rule.
+
+Use ancestry when permission depends on the inputs behind an action. Other
+rules, such as role checks and global tool restrictions, can apply independently
+of ancestry.
+
+A list of allowed tools fails for the same reason a session-order rule does: it
+cannot tell two runs apart.
+
+| | Tool allowlist | Rule over ancestry |
+| --- | --- | --- |
+| Is `publish` an allowed tool? | yes | yes |
+| `publish(external)` after reading only public documents | allow | allow |
+| `publish(external)` after reading the confidential report | allow: the allowlist cannot tell the runs apart | deny: the call depends on `read_confidential` |
+| the same, after a drafting step rewrote the text | allow | deny: ancestry survives the rewrite |
+| a parallel branch that never saw the report | allow | allow: the report is not in that call's ancestry |
+| what the model believed | irrelevant | irrelevant: the check happens outside the model |
+
+The policy controls the proposed action before its handler runs. See the
+[security model](/limits/) for model-provider and deployment boundaries.
+
+## What the graph cannot know
+
+A rule over ancestry is only as complete as the recorded graph.
+
+- **Code that reads something without recording it.** A tool that reads a file,
+  a database or a global variable has consumed an input the graph does not show.
+  Record it, or keep such reads inside a tool whose result is recorded.
+- **Text carried by hand.** Copying an answer's text into a new user message
+  creates a message with no ancestors. The framework guides say how to carry
+  messages so they keep their identity.
+- **Session boundaries.** Each session has its own graph. Preserved message objects carried into
+  another session can be marked as **unattributed external inputs**, with no
+  verified ancestry or successful-tool evidence. Copying only their text can
+  lose that origin. Follow the adapter’s rules for forwarding messages and
+  recognizing its marker: [LangChain](/integrations/langchain/#inputs-of-unknown-origin)
+  and [ADK](/integrations/google-adk/#values-from-another-sasy-session).
+
+An adapter records the messages and dependencies of its framework for you and
+places the checks; see [LangChain](/integrations/langchain/),
+[Google ADK](/integrations/google-adk/) and [Langroid](/integrations/langroid/).
+For your own orchestration code, [add a framework](/instrumentation/) lists what
+to record and where to check. The remaining terms are on the
+[concepts page](/concepts/).

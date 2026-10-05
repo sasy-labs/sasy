@@ -1,0 +1,386 @@
+---
+title: Policy language
+description: Read and write small SASY policies using facts, rules, and message dependencies.
+---
+
+A SASY policy answers a question about a proposed action: may this authenticated caller perform it, given the recorded context? Policies use Soufflé Datalog in `.dl` files. The engine supplies the common types and relations; your file adds rules.
+
+## Facts and rules
+
+A **relation** is a table of facts. `Actions` contains the proposed actions, `Principal` identifies the authenticated caller, and `Edge` records message dependencies. The engine supplies these facts; your rules derive new ones.
+
+```prolog
+IsAuthorized(idx) :-
+    Actions(idx, action),
+    IsTool(action, "Read").
+```
+
+Read this as: “put `idx` on the allowlist if that action is a Read tool call.” Commas mean AND. Separate rules with the same head mean OR: either rule can produce the fact. Variables join matching values across relations; `_` means any value, without retaining a binding. Quoted strings are constants. Rules end with a period.
+
+A request can contain several actions. The first `Actions` column is their zero-based index; authorization and denial results use the same index. For example, the engine might supply this fact:
+
+```prolog
+Actions(0, $CallTool("Read", "{\"file_path\":\"notes.txt\"}")).
+```
+
+This illustrates an input fact, not something to hard-code in a policy. `$CallTool` is a tagged value with a tool name and JSON arguments. The common action type also includes `$HTTPRequest(url, body, headers_json)` and `$SendAttempt(message)`. `@json_get_str(args, "file_path")` can extract a string from tool arguments.
+
+## A small policy
+
+Save this as `read-only.dl`:
+
+```prolog
+// Allow Read calls. Other tool names have no allowlist match.
+IsAuthorized(idx) :-
+    Actions(idx, action),
+    IsTool(action, "Read").
+
+// @deny_message: Writes are disabled in this session
+// @suggestion: Read the existing file and describe the proposed change
+Unauthorized(idx) :-
+    Actions(idx, action),
+    IsTool(action, "Write").
+```
+
+Bind it to a session with `sasy.session(policy=Path("read-only.dl"))`, as in [use the SDK directly](/quickstart/); the engine compiles it then and reports any error. To check a policy without a running engine, see [validating a policy](#validating-and-debugging-a-policy). This policy checks tool names; it does not restrict which files Read may access. The application must check the actual proposed action before executing it.
+
+The common authorization rule requires an authenticated principal, an `IsAuthorized(idx)` match, and no `Unauthorized(idx)` match. A hard denial wins even if an allow rule also matches. With no allowlist match, the action is not authorized. A new engine store starts with a deny-all bootstrap policy; choosing an allow-by-default policy is an explicit policy decision.
+
+Use `HasRole("role-name")` to require a role associated with the authenticated principal. `Principal` and `PrincipalRole` come from authentication. `Entity` is the caller-supplied actor label and is not proof of identity. See [authentication](/authentication/).
+
+## The relations you can use
+
+The engine fills these in before each check. Your rules read them and write
+`IsAuthorized` and `Unauthorized`.
+
+| Relation | What it means |
+| --- | --- |
+| `Actions(idx, action)` | The actions this check asks about. `idx` numbers them from 0, and every decision uses the same index. |
+| `IsTool(action, "name")` | The action is a call to the tool with that name. |
+| `IsToolCall(action)` | The action is a tool call, whatever its name. |
+| `QueriesHost(action, "host")` | The action is an HTTP request to that host. |
+| `IsAuthorized(idx)` | Your rules put action `idx` on the allow list. Nothing runs without this. |
+| `Unauthorized(idx)` | Your rules forbid action `idx`. This always beats `IsAuthorized`. |
+| `DenialReason(idx, kind, reason, suggestion)` | Why `idx` was refused. `kind` is `"block"` or `"ask"`. Normally written for you from the annotations above an `Unauthorized` rule. |
+| `Edge(a, b)` | Message `b` was computed from message `a`. |
+| `Current(id)` | A message the application named as an input of this action. |
+| `CurrentDepends(id)` | A message further back: anything the current messages were computed from, directly or through other messages. This is the action's ancestry. It does not include the current messages themselves. |
+| `ToolResult(id, tool, args)` | Message `id` is the result of running `tool` with `args`, and that call returned without error. A denied, failed or merely proposed call produces no `ToolResult`. |
+| `SentMessage(id, msg)` | The recorded message itself. Read its fields with `msg.contents`, `msg.agent`, `msg.entity`, `msg.principal`. |
+| `MessageMetadata(id, metadata)` | The adapter's own record of the source message, exactly as it was sent on `Event.metadata`. There is a row only for a message recorded with one, so a rule that joins on it never matches a message recorded without. The supplied adapters write canonical JSON whose object keys carry a type prefix (`s:` for a string key); read it with the `@json_*` functors. |
+| `ToolResultField(tool, field, value)` | A named JSON field read out of the contents of a tool result in the ancestry. Declare the field names you want with `ToolResultFieldName("...")`. |
+| `UnattributedInput(id)` | A current message or ancestor with the plain `provenance` marker for unknown origin. For LangChain’s canonical marker, add the [adapter-specific rules](/integrations/langchain/#inputs-of-unknown-origin). |
+| `DependsOnUnattributedInput()` | True when `UnattributedInput` matches at least one message; its adapter-specific marker rules must be present. |
+| `UnattributedInputOrigin(id, origin)` | Where an unattributed input came from, when the adapter could label it without trusting it — today `"another SASY session"`. |
+| `ReachableFrom(a, b)` | `b` is reachable from `a` by following edges forward, within the ancestry. Costlier than `CurrentDepends`; gated separately (below). |
+| `Principal(id)` | The authenticated caller. Cannot be forged over the wire. |
+| `Entity(id)` | A free-form label the caller attached to the request. Not authenticated; never authorize on it alone. |
+| `HasPrincipal()` | Some authenticated caller exists for this request. |
+| `HasRole("r")` | The authenticated caller has role `r`. |
+| `PrincipalRole(principal, role)` | The individual role bindings behind `HasRole`. |
+| `TenantId(id)` | The tenant this session belongs to. |
+| `ActionMetadata(idx, rel, a, b)` | Extra facts the application attached to this particular action. |
+| `PolicyMetadata(rel, a, b)` | Configuration facts bound with the policy rather than with a request. |
+| `ApplyTransform(idx, "transform-id")` | Apply the named rewrite — typically injecting a credential — to action `idx` when it is allowed. |
+
+### Turning ancestry on
+
+Following dependencies costs time, so a policy can say which actions need it.
+The shipped examples end with an optional line like:
+
+```prolog
+CurrentDependsPolicyRelevant() :- IsTool(_, "publish").
+```
+
+Read it as: compute `CurrentDepends` only when a `publish` call is being
+checked. `ReachableFromPolicyRelevant()` does the same for `ReachableFrom`, and
+implies `CurrentDependsPolicyRelevant()`.
+
+If your policy uses ancestry but declares no rule for either gate, the
+preprocessor adds a trivially-true fact, so ancestry is computed for every check
+and nothing is lost but time. "Uses ancestry" means naming `CurrentDepends` or
+`ReachableFrom`, or one of the relations built on them — `ToolResultField`,
+`UnattributedInput`, `DependsOnUnattributedInput`, `UnattributedInputOrigin`. A
+policy that names none of them gets no fact and no traversal, because it has
+nothing to read out of the ancestry.
+
+### Built-in functions
+
+A **functor** is a built-in function you call with `@name(...)` inside a rule.
+The general-purpose ones:
+
+| Functor | Returns |
+| --- | --- |
+| `@json_get_str(json, field)`, `@json_get_int(json, field)` | One top-level field of a JSON string; `""` or `-1` if absent. |
+| `@json_has_field(json, field)` | 1 if the field is present. |
+| `@json_get_str_path(json, path)`, `@json_get_int_path(json, path)` | A nested field, addressed by a dotted path. |
+| `@json_array_len(json, path)`, `@json_array_get_str(json, path, i)`, `@json_array_get_field_str(json, path, i, field)` | Length of, and elements in, a JSON array. |
+| `@json_object_has_key(json, path, key)`, `@json_object_field_int(json, base, key, sub)` | Keys of a JSON object. |
+| `@str_contains(s, sub)`, `@str_starts_with(s, prefix)` | 1 if the string contains or starts with the other. |
+| `@str_to_lower(s)`, `@str_len(s)` | Lowercased copy; length. |
+| `@url_host(url)` | The host part of a URL. |
+| `@registrable_domain(s)` | The registrable domain (such as `example.com`) of the first URL or host in the string, which subdomain and path tricks cannot fake. |
+| `@count_urls(s)` | How many URLs the string contains. |
+| `@hours_between(t1, t2)` | Hours between two timestamps. |
+| `@llm_check_fn(prompt, context)` | 1 or 0 from an LLM asked a yes/no question. Optional and off unless the engine is configured for it. |
+
+The remaining functors (`@has_deceptive_unicode`, `@cmd_invokes`,
+`@cmd_runs_sub`, `@cmd_egress_class`, `@normalize_cmd`, `@dangerous_rm` and the
+other command and Unicode helpers) exist for shell-command policies; they are
+declared in `souffle/common_policy.dl` with a comment explaining each.
+
+### Shorthand
+
+The preprocessor accepts dot notation on record fields, so
+
+```prolog
+SentMessage(id, m),
+    m.agent = "reviewer"
+```
+
+means the same as binding the record's fields positionally. The ADK example uses
+this form.
+
+## Context and dependency direction
+
+`Edge(source, destination)` means **destination depends on source**. If a tool result influenced an assistant message, the edge points from the result to that message.
+
+`Current(id)` marks the context nodes supplied with the check. `CurrentDepends(id)` finds their ancestors by following dependency edges backward. It does not include a current node merely because it is current. A policy that needs both can define:
+
+```prolog
+.decl InScope(id: symbol)
+InScope(id) :- Current(id).
+InScope(id) :- CurrentDepends(id).
+```
+
+Join these IDs to `ToolResult(id, tool_name, args)` or `SentMessage(id, message)` to inspect recorded evidence. This describes what the application recorded; missing observations do not prove that an event never happened. `!Relation(...)` tests absence in the supplied facts and derived results, so policies using absence depend on complete recording for the question they ask.
+
+
+## A cookbook
+
+Each rule below is taken from, or built out of, a shipped example policy.
+
+**Allow a fixed set of tools.**
+
+```prolog
+IsAuthorized(idx) :-
+    Actions(idx, a),
+    IsTool(a, "read_public").
+
+IsAuthorized(idx) :-
+    Actions(idx, a),
+    IsTool(a, "draft_summary").
+```
+
+**Allow a tool only for one argument value.**
+
+```prolog
+IsAuthorized(idx) :-
+    Actions(idx, a),
+    IsTool(a, "publish"),
+    a = $CallTool(_, args),
+    @json_get_str(args, "destination") = "internal".
+```
+
+**Deny when the ancestry contains a confidential read.** The rule fires even
+though a drafting tool rewrote the text in between, because it follows recorded
+dependencies rather than searching the output for secret words.
+
+```prolog
+.decl ConfidentialInput()
+ConfidentialInput() :- CurrentDepends(id), ToolResult(id, "read_confidential", _).
+
+// @deny_message: External publication depends on confidential information
+// @suggestion: Publish internally or start a separate task using public inputs
+Unauthorized(idx) :-
+    Actions(idx, a),
+    IsTool(a, "publish"),
+    a = $CallTool(_, args),
+    @json_get_str(args, "destination") = "external",
+    ConfidentialInput().
+```
+
+**Deny a combination of sources.** Either source alone is fine; together they
+are not.
+
+```prolog
+.decl ReadSource(name: symbol)
+ReadSource(name) :-
+    CurrentDepends(id),
+    ToolResult(id, "read_document", args),
+    name = @json_get_str(args, "name").
+
+// @deny_message: This summary depends on both untrusted and sensitive documents
+Unauthorized(idx) :-
+    Actions(idx, a),
+    IsTool(a, "send_summary"),
+    ReadSource("external-note"),
+    ReadSource("sensitive-report").
+```
+
+**Decide on a field the text does not show.** A node's text is what the model
+read; the rest of the message is in its metadata. Here a LangChain message whose
+`additional_kwargs` carries a marker refuses the publication, although the text
+is unremarkable.
+
+```prolog
+.decl MarkedDependency(id: symbol)
+MarkedDependency(id) :-
+    CurrentDepends(id),
+    MessageMetadata(id, md),
+    @json_get_str_path(md, "s:additional_kwargs.s:marker") = "exfil".
+
+// @deny_message: A message this publication depends on is marked in its metadata
+Unauthorized(idx) :-
+    Actions(idx, a),
+    IsTool(a, "publish"),
+    MarkedDependency(_).
+```
+
+The `s:` prefixes are part of the adapters' encoding: every object key is
+written with the kind of key it was. A path is split on `.` and `[` only, so the
+colon in a prefixed key is ordinary text and needs no escaping; a key that
+itself contains a `.` or a `[` cannot be reached by a path, and at the top level
+`@json_get_str(md, "<whole key>")` reads it instead. A message recorded without
+metadata has no row, so this rule leaves it alone.
+
+**Require a prior approval bound to the same arguments.** Because `ToolResult`
+exists only for a call that actually ran and returned without error, a denied or
+failed approval cannot satisfy this.
+
+```prolog
+.decl ApprovedPayment(request_id: symbol, payee: symbol, amount: symbol)
+ApprovedPayment(request_id, payee, amount) :-
+    CurrentDepends(approval),
+    ToolResult(approval, "approve_payment", approved_args),
+    SentMessage(approval, approved_message),
+    approved_message.agent = "reviewer",
+    request_id = @json_get_str(approved_args, "request_id"),
+    payee = @json_get_str(approved_args, "payee"),
+    amount = @json_get_str(approved_args, "amount").
+
+IsAuthorized(idx) :-
+    Actions(idx, a),
+    IsTool(a, "disburse_payment"),
+    a = $CallTool(_, args),
+    ApprovedPayment(@json_get_str(args, "request_id"),
+                    @json_get_str(args, "payee"), @json_get_str(args, "amount")).
+```
+
+**Allow a tool only for a role.** The role comes from the engine's
+authentication configuration, not from the conversation.
+
+```prolog
+IsAuthorized(idx) :-
+    Actions(idx, a),
+    IsTool(a, "disburse_payment"),
+    HasRole("treasury").
+```
+
+**Allow model traffic to one provider host.** Only relevant when the HTTP hooks
+are enabled (`sasy.instrument(http=True)`); without a rule like this, an
+outbound request is denied.
+
+```prolog
+IsAuthorized(idx) :-
+    Actions(idx, a),
+    QueriesHost(a, "api.openai.com").
+```
+
+**Treat input of unknown origin conservatively.** An adapter records a value it
+consumed but cannot attribute — a message handed back without its mark, state
+another process wrote, a value from a different SASY session — as a message of
+unknown origin, and carries on. `DependsOnUnattributedInput()` is true while one
+of those is in the ancestry.
+
+```prolog
+CurrentDependsPolicyRelevant() :- IsTool(_, "publish").
+
+// @deny_message: This action depends on input whose origin was not recorded
+Unauthorized(idx) :-
+    Actions(idx, a),
+    IsTool(a, "publish"),
+    DependsOnUnattributedInput().
+```
+
+To act only on values that came from another session, read the label instead.
+It says where the adapter placed the value; it is not a claim that the value is
+trustworthy.
+
+```prolog
+// @deny_message: This action depends on a value from another SASY session
+Unauthorized(idx) :-
+    Actions(idx, a),
+    IsTool(a, "publish"),
+    UnattributedInputOrigin(_, "another SASY session").
+```
+
+Note that the gate rule above names `publish`. A rule that reads the ancestry
+for some other tool needs that tool in the gate too, or it never fires:
+
+```prolog
+CurrentDependsPolicyRelevant() :- IsTool(_, "publish").
+CurrentDependsPolicyRelevant() :- IsTool(_, "send_email").
+```
+
+Such a message never carries successful-tool evidence, so a rule that requires a
+`ToolResult` already refuses it. These relations are for the other direction:
+noticing that something unattributed reached the action at all.
+
+**Ask instead of denying.** With `// @ask`, the rule produces an approval
+request rather than a hard block. The engine returns the decision as not
+authorized, with a reason of type "ask". The supplied adapters block the tool on
+such a decision, exactly as on a denial. To let the action run after a person
+approves it, your application must handle the "ask" reason itself.
+
+```prolog
+// @ask
+// @deny_message: Publishing externally needs a human approval
+Unauthorized(idx) :-
+    Actions(idx, a),
+    IsTool(a, "publish"),
+    a = $CallTool(_, args),
+    @json_get_str(args, "destination") = "external".
+```
+
+## Explanations and evaluation
+
+The Python preprocessor, `sugar.py`, expands the shorthand described above and rewrites ordinary `Unauthorized` rules into `DenialReason(idx, kind, reason, suggestion)` rules. Without annotations, the reason is `Action is denylisted`, the suggestion is empty, and the kind is `block`. The common rule derives hard denial from block reasons. `// @ask` instead produces an approval request; it needs an application's approval handling and does not override a hard block. Annotations on `IsAuthorized` remain author hints, not denial rules.
+
+Graph observations belong to the authenticated tenant and session. Each check supplies its current nodes, action batch, identity and per-action `ActionMetadata`; `PolicyMetadata` supplies configuration bound with the policy. Reusing a session preserves its recorded context, while a new session has its own graph and policy binding. Recording a fact does not execute or authorize a tool.
+
+## Validating and debugging a policy
+
+`make souffle-validate FILE=my_policy.dl` compiles the policy without a running
+engine and prints the compiler's errors. It needs `souffle` and `python3` on your
+`PATH`; with the Docker engine, binding the policy to a session performs the
+same check. `python3 scripts/validate_policy.py --analyze my_policy.dl` additionally
+reports rules that contradict each other, rules another rule already covers, and
+rules nothing can reach; it reports "unsupported" instead for a policy that uses
+functors.
+
+Without that step, a policy error surfaces when a session binds it — that is,
+when your `with sasy.session(policy=...)` block is entered, not when you call
+`sasy.configure`. Two mistakes are easy to make:
+
+- Passing a string where a path belongs. `sasy.session(policy="my_policy.dl")`
+  treats that text as the policy *source*, not as a filename. Use
+  `Path("my_policy.dl")`.
+- Using a relation you never declared. Anything outside the table above needs
+  its own `.decl` line before you use it.
+
+When an action is denied because no allow rule matched, the denial trace lists
+each allow rule with a status in its `allow_routes` field. `blocked` means the
+fixed conditions of that rule cannot all hold for this request, for example
+because it names a different tool. `possible` means nothing in the request rules
+it out — a hint, not a promise that a change will make it match. `unknown` means
+the analysis could not decide. Any suggestion shown comes from the policy
+author's `// @suggestion` annotation. The trace's `reasons` and
+`suggested_fixes` — the text the adapters show the model — carry the
+`@deny_message` text of the allow rules that apply to this request (those whose
+`@tool_pattern` or `@url_pattern` annotation matches the action, or that have
+no such annotation) and the `@suggestion` text of those rules not `blocked`;
+the rule identifiers and statuses are in `allow_routes` only.
+
+See [limits](/limits/) for what static analysis and these diagnostics do and do
+not establish, and for the evaluation deadlines that apply to both.

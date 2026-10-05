@@ -1,0 +1,17 @@
+{
+  "type": "chain",
+  "providers": [
+    {
+      "type": "api_key",
+      "metadata_key": "x-api-key",
+      "static_keys": {
+        "demo-key": "client",
+        "admin-test-key": "admin"
+      }
+    },
+    {
+      "type": "mtls",
+      "entity_source": "cn"
+    }
+  ]
+}

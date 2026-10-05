@@ -1,0 +1,21 @@
+[package]
+name = "sasy-policy-analysis"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Static analysis pipeline for Soufflé policies (lexer/parser/chase, contradiction/redundancy/subsumption/reachability) + rule-metadata extraction"
+
+[lib]
+name = "sasy_policy_analysis"
+
+[[bin]]
+name = "dl-ast-dump"
+path = "src/bin/dl-ast-dump.rs"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+thiserror = { workspace = true }

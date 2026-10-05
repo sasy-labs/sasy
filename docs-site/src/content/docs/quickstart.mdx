@@ -1,0 +1,106 @@
+---
+title: Use the SDK directly
+description: Connect the Python SDK to a running engine, bind a policy you wrote, and check two proposed actions.
+---
+
+This tutorial binds a small policy to a session and checks two proposed actions
+with the Python SDK. It prints the decisions without dispatching either tool.
+For a framework agent, start with [SDK usage patterns](/sdk/).
+
+## Connect the SDK
+
+Follow the [quick start](/get-started/) to install the SDK and run `sasy engine start`. It
+saves a selected local connection profile in `~/.sasy`, which the Python SDK
+uses from any project directory.
+
+## Write a policy
+
+Save this policy as `read-only.dl`:
+
+```prolog
+IsAuthorized(idx) :-
+    Actions(idx, action),
+    IsTool(action, "Read").
+
+// @deny_message: Writes are disabled in this session
+// @suggestion: Read the existing file and describe the proposed change
+Unauthorized(idx) :-
+    Actions(idx, action),
+    IsTool(action, "Write").
+```
+
+The engine compiles and validates the policy when the session starts, including
+when it runs in Docker. No local compiler is needed for this tutorial.
+
+Save the following as `first_check.py` in that directory and run `python first_check.py` in the environment where you installed SASY. Keep the file beside `read-only.dl`.
+
+```python
+import json
+from pathlib import Path
+
+import sasy
+
+with sasy.session(policy=Path("read-only.dl")):
+    read = sasy.check_tool_call("Read", json.dumps({"file_path": "notes.txt"}))
+    write = sasy.check_tool_call("Write", json.dumps({"file_path": "notes.txt", "content": "hello"}))
+    print("Read:", read.authorized)    # True
+    print("Write:", write.authorized)  # False
+    print(write.denial_reasons)
+```
+
+The first two output lines are `Read: True` and `Write: False`; the denial reasons include “Writes are disabled in this session.”
+
+The allow rule permits `Read`; the deny rule rejects `Write` and supplies the
+reason. Other tool names have no allow rule and are denied. This example checks
+tool names; add argument conditions to restrict which paths may be read.
+
+## When it does not work
+
+- **`UNAUTHENTICATED`, or a TLS failure on connect.** `SASY_API_KEY` and
+  `TLS_CA_PATH` (or `ca_path`) must belong to the running engine. `sasy engine
+  start` refreshes its local profile. Exported environment variables and project
+  `.env` settings take precedence; update or remove stale overrides. See
+  [troubleshooting](/local-engine/#troubleshooting) for the make-based setup.
+- **An error when the `with sasy.session(...)` block is entered.** That is where
+  the policy is compiled, so a syntax error or an undeclared relation surfaces
+  here. Check the error against your policy source.
+- **Everything is denied.** A session with no policy of its own uses the
+  tenant default, and a new store's default denies everything.
+
+## Connect a tool handler
+
+Run the tool only when `decision.authorized` is true. For rules about the inputs
+behind a call, also record each message with `sasy.record`, together with the
+messages it was computed from, and pass the requesting message's ID to the check:
+
+```python
+import json
+from pathlib import Path
+
+import sasy
+
+with sasy.session(policy=Path("policy.dl")):
+    task = sasy.record("Summarize the report and email the team", role="user")
+    report = sasy.record(report_text, result_of=("read_document", {"name": "report"}))
+    request = sasy.record(model_reply, role="llm", inputs=[task, report],
+                          tool_calls=[("send_email", args)])
+    decision = sasy.check_tool_call("send_email", json.dumps(args),
+                                    input_node_ids=[request])
+    # Conditional approvals (transform_ids) are treated as denials here.
+    if decision.authorized and not decision.transform_ids:
+        result = send_email(**args)
+        sasy.record(result, inputs=[request], result_of=("send_email", args))
+```
+
+`sasy.record` returns each message's ID; `inputs` become edges in the dependency
+graph, `tool_calls` lists the calls a message requests, and `result_of` marks a
+tool result so a policy can match it with `ToolResult`. Roles are `"system"`,
+`"user"`, `"llm"` and `"agent"` (the default). `sasy.record_async` is the async
+form. SASY decides; your code enforces by running the tool only when it is
+allowed. A decision with `transform_ids` allows the call only with those
+credential transforms applied, so a loop that does not apply them treats it as
+denied. [Add a framework](/instrumentation/) explains which messages and edges
+to record, and the supplied [framework adapters](/sdk/) do this for you.
+
+Continue with [policy language](/policy-language/) for rules over arguments,
+roles, approvals, and ancestry.

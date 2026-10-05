@@ -1,0 +1,216 @@
+name: Engine image release
+
+# Called by the SDK release. This workflow owns the core gate, qualification,
+# immutable publication and anonymous access checks; none can be bypassed.
+on:
+  workflow_call:
+    outputs:
+      digest:
+        description: Qualified, anonymously pullable multi-platform image digest
+        value: ${{ jobs.public_access.outputs.digest }}
+      version:
+        description: Version checked against the release tag and source tree
+        value: ${{ jobs.version.outputs.version }}
+
+permissions: {}
+
+concurrency:
+  group: engine-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  version:
+    # Only the sasy-labs organization can push to ghcr.io/sasy-labs.
+    if: github.event_name == 'push' && github.repository == 'sasy-labs/sasy' && !github.event.repository.private && startsWith(github.ref, 'refs/tags/sasy-v')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.check.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - id: check
+        name: Require the tag to match every recorded version
+        run: |
+          version=$(python3 scripts/check_release_version.py "$GITHUB_REF_NAME")
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+  core:
+    # The same gate as the SDK release: the full CI suite must pass first.
+    needs: version
+    uses: ./.github/workflows/ci-core.yml
+    permissions:
+      contents: read
+
+  build:
+    needs: [version, core]
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            arch: amd64
+            machine: x86_64
+          - runner: ubuntu-24.04-arm
+            arch: arm64
+            machine: aarch64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 180
+    permissions:
+      contents: read
+      packages: write
+    env:
+      ARCH: ${{ matrix.arch }}
+      MACHINE: ${{ matrix.machine }}
+      IMAGE: ghcr.io/sasy-labs/sasy
+      VERSION: ${{ needs.version.outputs.version }}
+      DOCKER_LABEL: sasy-release=${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Require native architecture
+        run: test "$(uname -m)" = "$MACHINE"
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+      - name: Install qualification tools
+        run: uv sync --group dev
+      - name: Build the engine image from the locked flake
+        run: |
+          docker build --tag "$IMAGE:$VERSION-$ARCH" \
+            --label "org.opencontainers.image.source=https://github.com/$GITHUB_REPOSITORY" \
+            --label "org.opencontainers.image.revision=$GITHUB_SHA" \
+            --label "org.opencontainers.image.version=$VERSION" .
+      - name: Qualify the image with the engine integration tests
+        env:
+          PYTHON_DOTENV_DISABLED: '1'
+        run: |
+          python3 scripts/release_image_wrapper.py "$RUNNER_TEMP/sasy-image-engine" \
+            --image "$IMAGE:$VERSION-$ARCH" --label "$DOCKER_LABEL"
+          SASY_TEST_ENGINE="$RUNNER_TEMP/sasy-image-engine" uv run --no-sync pytest --run-integration -q \
+            --basetemp "$RUNNER_TEMP/sasy-image-tests" \
+            tests/integration/test_core_rpc.py::test_action_order_timing_and_transform_ids \
+            tests/integration/test_policy_lifecycle.py::test_distinct_policy_bindings_and_rebind_preserve_graph \
+            tests/integration/test_policy_lifecycle.py::test_dependency_context_controls_authorization
+      - name: Qualify the self-initializing start used by `sasy engine start`
+        run: |
+          project="$RUNNER_TEMP/consumer"
+          other="$RUNNER_TEMP/another-project"
+          mkdir "$project" "$other" && cd "$project"
+          sasy() { uv run --no-sync --project "$GITHUB_WORKSPACE" sasy "$@"; }
+          cat > check.py <<'PY'
+          import json
+          import sasy
+          policy = 'IsAuthorized(idx) :- Actions(idx, a), IsTool(a, "Read").'
+          with sasy.session(policy=policy):
+              read = sasy.check_tool_call("Read", json.dumps({"file_path": "a"}))
+              write = sasy.check_tool_call("Write", json.dumps({"file_path": "a"}))
+          assert read.authorized and not write.authorized, (read, write)
+          PY
+          check() { uv run --no-sync --project "$GITHUB_WORKSPACE" python "$project/check.py"; }
+          sasy engine start --image "$IMAGE:$VERSION-$ARCH" --name sasy-release-smoke \
+            --profile release-check --client-entity release-client --admin-entity release-admin \
+            --tenant release-tenant --trust-domain release.local
+          check
+          cp "$HOME/.sasy/profiles/release-check/profile.json" "$RUNNER_TEMP/initial-profile.json"
+          # The selected connection works across directories without .env.
+          test ! -e "$project/.env"
+          cd "$other"
+          check
+          sasy engine start
+          check
+          sasy engine stop
+          sasy engine start
+          check
+          cmp "$RUNNER_TEMP/initial-profile.json" "$HOME/.sasy/profiles/release-check/profile.json"
+          test ! -e "$other/.env"
+          sasy engine stop --name sasy-release-smoke
+          docker volume rm sasy-release-smoke-data
+      - name: Push the qualified image
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p dist
+          printf '%s' "$GH_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+          # The version tag is the published one and is never replaced. The
+          # per-architecture tags are intermediates; a rerun may push them again.
+          scripts/require_unpublished_image.sh "$IMAGE:$VERSION"
+          docker push "$IMAGE:$VERSION-$ARCH"
+          docker inspect --format '{{index .RepoDigests 0}}' "$IMAGE:$VERSION-$ARCH" > "dist/sasy-linux-$ARCH.image"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: engine-image-${{ matrix.arch }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: 7
+      - name: Clean up owned test containers
+        if: always()
+        run: |
+          docker ps -aq --filter "label=$DOCKER_LABEL" | xargs -r docker rm -f
+          docker rm -f sasy-release-smoke 2> /dev/null || true
+          docker logout ghcr.io || true
+
+  publish:
+    needs: [version, build]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      digest: ${{ steps.index.outputs.digest }}
+      amd64: ${{ steps.index.outputs.amd64 }}
+      arm64: ${{ steps.index.outputs.arm64 }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      IMAGE: ghcr.io/sasy-labs/sasy
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: engine-image-*
+          path: dist
+          merge-multiple: true
+      - name: Publish the multi-platform version tag
+        id: index
+        run: |
+          printf '%s' "$GH_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+          scripts/require_unpublished_image.sh "$IMAGE:$VERSION"
+          docker manifest create "$IMAGE:$VERSION" \
+            "$(cat dist/sasy-linux-amd64.image)" "$(cat dist/sasy-linux-arm64.image)"
+          # Use the successful push receipt: another registry request here could
+          # fail after publishing the immutable tag and make retry impossible.
+          receipt=$(docker manifest push "$IMAGE:$VERSION")
+          printf '%s\n' "$receipt"
+          digest=$(printf '%s\n' "$receipt" | tail -n 1)
+          [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+          echo "amd64=$(cat dist/sasy-linux-amd64.image)" >> "$GITHUB_OUTPUT"
+          echo "arm64=$(cat dist/sasy-linux-arm64.image)" >> "$GITHUB_OUTPUT"
+      - name: Log out
+        if: always()
+        run: docker logout ghcr.io || true
+
+  public_access:
+    # Separate from immutable publication so a visibility failure is recoverable
+    # by rerunning failed jobs after the package has been made Public.
+    needs: [version, publish]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    permissions:
+      contents: read
+    outputs:
+      digest: ${{ steps.anonymous.outputs.digest }}
+    env:
+      IMAGE: ghcr.io/sasy-labs/sasy
+      VERSION: ${{ needs.version.outputs.version }}
+      DIGEST: ${{ needs.publish.outputs.digest }}
+      AMD64: ${{ needs.publish.outputs.amd64 }}
+      ARM64: ${{ needs.publish.outputs.arm64 }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Require anonymous pulls of both qualified architectures
+        id: anonymous
+        run: |
+          python3 scripts/verify_public_image.py "$IMAGE@$DIGEST" \
+            --tagged-reference "$IMAGE:$VERSION" --amd64 "$AMD64" --arm64 "$ARM64"
+          echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"

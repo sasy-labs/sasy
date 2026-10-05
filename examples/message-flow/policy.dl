@@ -1,0 +1,34 @@
+// These predicates describe the current action's dependency history.
+.decl DependsOnUntrusted()
+DependsOnUntrusted() :-
+    CurrentDepends(id),
+    ToolResult(id, "read_document", args),
+    @json_get_str(args, "name") = "external-note".
+
+.decl DependsOnSensitive()
+DependsOnSensitive() :-
+    CurrentDepends(id),
+    ToolResult(id, "read_document", args),
+    @json_get_str(args, "name") = "sensitive-report".
+
+IsAuthorized(idx) :-
+    Actions(idx, a),
+    IsTool(a, "read_document"),
+    a = $CallTool(_, args),
+    (@json_get_str(args, "name") = "external-note";
+     @json_get_str(args, "name") = "sensitive-report").
+
+// Sends may go to any recipient. The policy lists no attacker addresses and
+// looks for no attack text; it blocks one combination of inputs.
+IsAuthorized(idx) :- Actions(idx, a), IsTool(a, "send_summary").
+
+// @deny_message: This summary depends on both untrusted and sensitive documents
+// @suggestion: Do not send this summary; ask an authorized reviewer to assess it
+Unauthorized(idx) :-
+    Actions(idx, a),
+    IsTool(a, "send_summary"),
+    DependsOnUntrusted(),
+    DependsOnSensitive().
+
+// Optional speed-up: only a send needs its ancestry, so skip the walk for reads.
+CurrentDependsPolicyRelevant() :- IsTool(_, "send_summary").

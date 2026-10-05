@@ -1,0 +1,471 @@
+syntax = "proto3";
+
+package policy_engine;
+
+// Policy Engine service for authorization and administration
+service PolicyEngine {
+    // Check authorization for one or more actions
+    rpc CheckAuthorization(AuthorizationRequest) returns (AuthorizationResponse);
+
+    // Get current synchronization status
+    rpc GetSyncStatus(SyncStatusRequest) returns (SyncStatusResponse);
+
+    // Health check
+    rpc Health(HealthRequest) returns (HealthResponse);
+
+    // Apply a policy to a target scope:
+    //
+    //   * scope.session(session_id="conv-1") — bind a single
+    //     session. Empty session_id = the per-tenant global
+    //     session.
+    //   * scope.default() — set the tenant's default policy for
+    //     newly-spawned unpinned sessions. Existing sessions keep
+    //     their bindings — gradual rollout.
+    //   * scope.force() — set the tenant default *and* evict every
+    //     live session in the tenant. They re-bind to the new
+    //     default on next traffic. Disruptive — break-glass /
+    //     emergency reload.
+    //
+    // Server hashes (`source ‖ functors ‖ backend ‖ ...`) so
+    // identical re-uploads are free (same content → same registry
+    // entry, no recompile). The returned policy_id is informational
+    // — clients address policies by source, not by id.
+    rpc SetPolicy(SetPolicyRequest) returns (SetPolicyResponse);
+
+    // Get the current evaluator backend status
+    rpc GetEvaluatorStatus(EvaluatorStatusRequest) returns (EvaluatorStatusResponse);
+
+    // Validate policy source without applying it
+    rpc ValidatePolicy(ValidatePolicyRequest) returns (ValidatePolicyResponse);
+
+    // End a session: release its evaluator, policy binding, session metadata
+    // and ownership. Recorded graph observations remain in the store.
+    // Reusing the id does not retain its former policy or approvals.
+    rpc EndSession(EndSessionRequest) returns (EndSessionResponse);
+
+    // Append dynamic, session-scoped PolicyMetadata facts mid-session
+    // (for example a user's approval of an `@ask` decision). Append-only:
+    // facts accumulate
+    // and persist; the policy resolves any conflict by precedence. The
+    // facts are pushed into the live evaluator and re-seeded on respawn.
+    rpc UpdatePolicyMetadata(UpdatePolicyMetadataRequest) returns (UpdatePolicyMetadataResponse);
+}
+
+// Authorization request message
+message AuthorizationRequest {
+    // Tags 5 and 7 are reserved and must not be reused. The tenant is
+    // derived from the authenticated caller, and a session is bound to a
+    // policy with SetPolicy.
+    reserved 5, 7;
+    reserved "tenant_id", "policy_id";
+
+    // Node IDs from which the action originates (from observability graph)
+    // Dependencies from any of these nodes are considered valid
+    repeated string current_node_ids = 1;
+
+    // Actions to authorize
+    repeated Action actions = 2;
+
+    // User-supplied actor in the caller's domain, surfaced to the policy as
+    // `Entity(id)`. Not attested: see `principal` below for the
+    // auth-derived identity.
+    optional string entity = 3;
+
+    // Roles associated with the authenticated entity (from JWT claims)
+    repeated string roles = 4;
+
+    // Session/conversation partition for the policy graph store.
+    // The evaluator filters its derivation to this session's
+    // tuples. Empty string is treated as the per-tenant "global"
+    // partition. The session must already be bound to a policy via
+    // `SetPolicy(scope=session)` (or fall through to the tenant
+    // default set via `SetPolicy(scope=default)` / `force()`); a
+    // CheckAuthorization on a session with no policy and no tenant
+    // default returns FAILED_PRECONDITION.
+    optional string session_id = 6;
+
+    // Server-stamped principal (auth-derived). Any value sent
+    // by a client is overwritten at the gRPC boundary. Distinct
+    // from `entity` above, which stays user-supplied (free-form
+    // actor in the caller's domain).
+    optional string principal = 8;
+}
+
+// An action to be authorized
+message Action {
+    oneof action_type {
+        HttpRequestAction http_request = 1;
+        ToolCallAction tool_call = 2;
+        SendMessageAction send_message = 3;
+    }
+    // Per-action metadata: facts the caller resolved outside the engine for
+    // this specific action at check time, for example a package-registry
+    // verdict for an install command. Projected to
+    // `ActionMetadata(idx, rel, a, b)` for the query. Distinct from
+    // `SetPolicyRequest.policy_metadata`, which is static, per-policy config
+    // seeded once at evaluator init.
+    repeated PolicyMetadataFact metadata = 4;
+}
+
+// HTTP request action
+message HttpRequestAction {
+    string url = 1;
+    string body = 2;
+    repeated Header headers = 3;
+}
+
+// HTTP header
+message Header {
+    string key = 1;
+    string value = 2;
+}
+
+// Tool call action
+message ToolCallAction {
+    string fn_name = 1;
+    string args = 2;
+}
+
+// Send message action
+message SendMessageAction {
+    string content = 1;
+    string agent = 2;
+    string agent_role = 3;
+    repeated ToolCall tool_calls = 4;
+    optional string entity = 5;
+}
+
+// Tool call within a message
+message ToolCall {
+    string fn_name = 1;
+    string args = 2;
+}
+
+// Authorization response
+message AuthorizationResponse {
+    // Results for each action in the request
+    repeated ActionResult results = 1;
+
+    // Performance timing (microseconds)
+    optional PerformanceTiming timing = 2;
+}
+
+// Performance timing breakdown for authorization decisions
+message PerformanceTiming {
+    // Total wall-clock time from request to response (microseconds)
+    uint64 total_us = 1;
+    // Time waiting for graph sync (microseconds)
+    uint64 sync_wait_us = 2;
+    // Time spent in Datalog evaluator (microseconds)
+    uint64 eval_us = 3;
+    // Evaluator backend name
+    string backend = 4;
+    // Number of nodes in graph at query time
+    uint64 graph_nodes = 5;
+    // Number of edges in graph at query time
+    uint64 graph_edges = 6;
+}
+
+// Result for a single action
+message ActionResult {
+    // Index of the action in the request
+    uint32 index = 1;
+
+    // Whether the action is authorized
+    bool authorized = 2;
+
+    // Denial trace if not authorized
+    optional DenialTrace trace = 3;
+
+    // Transform IDs to apply if authorized (from ApplyTransform relation)
+    repeated string transform_ids = 4;
+
+    // False when the policy's `AllowPassthrough` relation holds for this
+    // action, true otherwise. Used by the HTTP paths (ProxyHTTP and the
+    // forward-proxy listener): true rejects an unauthorized request, false
+    // forwards it unchanged and without transforms.
+    bool deny_if_unauthorized = 5;
+}
+
+// Denial trace explaining why an action was denied
+message DenialTrace {
+    // Description of the action that was denied
+    string action_description = 1;
+
+    // Reasons for denial
+    repeated DenialReason reasons = 2;
+
+    // Suggested fixes
+    repeated string suggested_fixes = 3;
+
+    // Per-rule necessary-condition analysis over fixed built-in facts. A
+    // possible route is not a proof that approval is reachable or sufficient.
+    repeated AllowRouteDiagnostic allow_routes = 4;
+}
+
+message AllowRouteDiagnostic {
+    string rule_id = 1;
+    // "blocked", "possible", or "unknown" in the current bounded analysis.
+    string status = 2;
+    string details = 3;
+    repeated string suggestions = 4;
+    optional string source_location = 5;
+}
+
+// A single reason for denial
+message DenialReason {
+    // Type of denial reason
+    DenialReasonType reason_type = 1;
+
+    // Additional details (policy-defined message)
+    string details = 2;
+
+    // Source location of the rule (file:line) for debugging
+    optional string source_location = 3;
+}
+
+// Types of denial reasons
+enum DenialReasonType {
+    DENIAL_REASON_UNSPECIFIED = 0;
+    NOT_AUTHENTICATED = 1;
+    DENYLISTED = 2;
+    NOT_ALLOWLISTED = 3;
+    SYNC_TIMEOUT = 4;
+    // Soft denial: the policy requests user approval rather than a hard block
+    // (the `@ask` annotation / "ask"-kind DenialReason). A host with an
+    // approval channel prompts the user; otherwise it degrades to a deny.
+    ASK = 5;
+}
+
+// Sync status request (empty)
+message SyncStatusRequest {}
+
+// Sync status response
+message SyncStatusResponse {
+    // Current sequence number from observability server
+    int64 current_sequence = 1;
+
+    // Number of nodes in the graph
+    int64 node_count = 2;
+
+    // Number of edges in the graph
+    int64 edge_count = 3;
+
+    // Whether connected to the updates server
+    bool connected = 4;
+}
+
+// Health check request (empty)
+message HealthRequest {}
+
+// Health check response
+message HealthResponse {
+    bool healthy = 1;
+    string message = 2;
+}
+
+// Apply a policy to a target scope. Server hashes the request
+// and dedups: identical re-uploads return the same `policy_id`
+// and skip the souffle/g++ pipeline entirely.
+message SetPolicyRequest {
+    // Policy source code (Soufflé dialect with optional dot notation sugar).
+    string policy_source = 1;
+
+    // Optional custom C++ functor source code. Compiled alongside
+    // functors_common.cpp into the evaluator binary (compiled mode)
+    // or libfunctors.so (interpreted mode).
+    string functor_source = 2;
+
+    // Target backend for compilation: "souffle" or
+    // "souffle-interpreted". "flowlog" is an experimental external
+    // evaluator with its own static policy assets and no compile
+    // pipeline, so it is NOT accepted here — SetPolicy rejects it with
+    // an explicit error (it is still a valid *active* backend a
+    // deployment may report; see the status `backend` field below).
+    // Empty string = keep the current backend (or the tenant's
+    // current default backend when applying to a fresh session).
+    string backend = 3;
+
+    // Where this policy applies. Exactly one variant must be set.
+    PolicyScope scope = 4;
+
+    // Static policy configuration → the evaluator's PolicyMetadata(rel, a, b)
+    // EDB relation. Decoupled from the compiled policy logic: a precompiled
+    // (restricted-build) evaluator accepts this without recompiling, so the
+    // same fixed policy can carry different allowlists / cooldown windows /
+    // capability flags per deployment. Sent to the evaluator at init.
+    repeated PolicyMetadataFact policy_metadata = 5;
+
+    // Bind an ALREADY-INSTALLED policy by its content hash instead of sending
+    // source. When non-empty, policy_source / functor_source / backend are
+    // ignored and the server NEVER compiles: it binds the target scope to the
+    // pre-installed policy carrying this hash (the same hash the dedup path
+    // derives from source), subject to the restricted policy lock. A miss is
+    // rejected (FailedPrecondition), never compiled. Lets a client bind a
+    // policy the server already holds without shipping the .dl source.
+    string bind_content_hash = 6;
+
+    // Bind an ALREADY-INSTALLED policy by its baked PROFILE NAME (e.g.
+    // "security") instead of by hash or source. A profile is a policy compiled
+    // into the binary by the restricted build (cargo feature `restricted`:
+    // precompiled policies, no compiler). The server resolves the name to its
+    // content hash via the registry name index, then binds through the SAME
+    // policy lock + dedup path. policy_source/functor_source/backend are
+    // ignored; the server NEVER compiles. A name with no installed profile is
+    // rejected (FailedPrecondition). Lets a client bind a precompiled policy
+    // with neither the .dl source nor its content hash — just the name.
+    string bind_profile_name = 7;
+}
+
+// One static config fact for SetPolicyRequest.policy_metadata.
+// `rel` names the fact kind; `a` and `b` are its two string arguments (`b`
+// may be empty). The policy gives them meaning, for example
+// `TrustedDomain(d) :- PolicyMetadata("trusted_domain", d, _).`
+message PolicyMetadataFact {
+    string rel = 1;  // relation discriminator, e.g. "trusted_domain", "cooldown"
+    string a = 2;    // first arg (value / key)
+    string b = 3;    // second arg (optional)
+}
+
+// Append dynamic, session-scoped PolicyMetadata facts mid-session.
+message UpdatePolicyMetadataRequest {
+    // Session to scope the facts to (within the auth-derived tenant).
+    string session_id = 1;
+    // Facts to append, for example after a user approves an `@ask` decision:
+    // {rel: "approved", a: "<node_id>"}, which the policy reads through
+    // `PolicyMetadata`.
+    repeated PolicyMetadataFact facts = 2;
+}
+
+message UpdatePolicyMetadataResponse {
+    bool accepted = 1;
+}
+
+// Scope a SetPolicy call targets.
+message PolicyScope {
+    oneof target {
+        SessionTarget session = 1;
+        DefaultTarget default = 2;
+        ForceTarget force = 3;
+    }
+}
+
+// Bind one session. ``session_id == ""`` targets the per-tenant
+// global session — a single shared partition that observes events
+// from every session in the tenant. Useful for break-glass overrides
+// and tenant-admin observability tooling.
+message SessionTarget {
+    string session_id = 1;
+}
+
+// Set the tenant's default policy for newly-spawned unpinned
+// sessions. Existing sessions keep their current bindings — pure
+// gradual rollout. Combine with a canary `SessionTarget` upload
+// of the same source to validate before promoting.
+message DefaultTarget {}
+
+// Set the tenant default AND evict every live session in the
+// tenant; they re-bind to the new default on next traffic.
+// Disruptive — emergency reload / break-glass.
+message ForceTarget {}
+
+message SetPolicyResponse {
+    bool accepted = 1;
+    string message = 2;
+    // Compiler/parser error output (populated on failure).
+    string error_output = 3;
+    // Server-internal id assigned to this policy. Returned for
+    // observability / debugging — clients address policies by
+    // source, not by id, so callers normally ignore this field.
+    string policy_id = 4;
+}
+
+// Evaluator status
+message EvaluatorStatusRequest {}
+
+message EvaluatorStatusResponse {
+    // Active backend name: "souffle", "souffle-interpreted", "flowlog"
+    string backend = 1;
+    // Whether the evaluator process is running
+    bool alive = 2;
+    // Policy file path currently loaded
+    string policy_path = 3;
+}
+
+// Validate policy source without applying it
+message ValidatePolicyRequest {
+    // Policy source code (Soufflé dialect with optional dot notation sugar)
+    string policy_source = 1;
+    // When set, also run static analyses (contradiction
+    // detection, redundancy, reachability) on the
+    // desugared source and return the report. Adds a few
+    // hundred milliseconds for typical policies.
+    bool run_analyses = 2;
+    // Optional extra reachability targets in addition
+    // to the defaults (IsAuthorized, Unauthorized, …).
+    repeated string extra_reach_targets = 3;
+}
+
+message ValidatePolicyResponse {
+    bool valid = 1;
+    // Preprocessor or Soufflé parse/type errors (empty if valid)
+    string error_output = 2;
+    // Desugared policy source (for inspection)
+    string desugared_source = 3;
+    // Static-analysis findings, populated when the
+    // request set `run_analyses` and parsing succeeded.
+    AnalysisReport analyses = 4;
+}
+
+// Bundle of static-analysis findings.
+message AnalysisReport {
+    repeated ContradictionFinding contradictions = 1;
+    repeated RedundancyFinding redundancies = 2;
+    repeated ReachabilityFinding reachability = 3;
+    // Names of rules tagged `@broad` in the source —
+    // contradictions involving these are downgraded to
+    // ExpectedCarveOut.
+    repeated string broad_rules = 4;
+}
+
+message ContradictionFinding {
+    // DenyCrossesSpecificAllow, DenySwallowsAllow,
+    // ExpectedCarveOut.
+    string category = 1;
+    string allow_location = 2;
+    string deny_location = 3;
+    string message = 4;
+    // Pre-formatted rule bodies (head :- body.) so the
+    // auditor can read the conflicting rules inline.
+    string allow_body = 5;
+    string deny_body = 6;
+}
+
+message RedundancyFinding {
+    string head_relation = 1;
+    string redundant_location = 2;
+    string covered_by_location = 3;
+    string redundant_body = 4;
+    string covered_by_body = 5;
+}
+
+// End-session request. Releases evaluator, binding, metadata and ownership.
+// Recorded graph observations remain; the former policy and approvals do not.
+message EndSessionRequest {
+    string session_id = 1;
+}
+
+message EndSessionResponse {
+    // True if a SessionEvaluator was actively running for this
+    // session and was dropped; false if no evaluator was live.
+    bool was_active = 1;
+}
+
+message ReachabilityFinding {
+    string target = 1;
+    repeated string disjuncts = 2;
+    // Relations kept symbolic (recursive IDBs).
+    repeated string opaque = 3;
+    // Disjuncts pruned as UNSAT by the chase.
+    uint32 pruned = 4;
+}

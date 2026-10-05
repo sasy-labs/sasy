@@ -1,0 +1,53 @@
+[package]
+name = "sasy-auth"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Authentication providers and RBAC interceptors"
+
+[lib]
+name = "sasy_auth"
+
+[dependencies]
+sasy-common = { workspace = true }
+tonic = { workspace = true }
+tokio = { workspace = true }
+jsonwebtoken = { workspace = true, optional = true }
+rustls = { workspace = true }
+tokio-rustls = { workspace = true }
+rustls-pemfile = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = { workspace = true }
+tracing = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+parking_lot = { workspace = true }
+reqwest = { version = "0.12", features = ["blocking", "json"], optional = true }
+x509-parser = { version = "0.16", optional = true }
+rustls-pki-types = { version = "1", optional = true }
+
+[features]
+# Credential-parsing auth providers beyond passthrough. The restricted build is
+# single-user loopback (it refuses non-loopback binds) and selects mTLS
+# explicitly alongside --no-default-features, keeping the
+# certificate provider + interceptor/RBAC core while dropping jsonwebtoken
+# and reqwest(blocking). Enforcement is unaffected:
+# CheckToolCall reads the AuthResult the interceptor stamps, which passthrough
+# supplies. rustls/tonic-TLS stay (pulled by tonic + the binary directly).
+default = ["full-auth"]
+full-auth = ["jwt", "mtls", "api-key", "chain"]
+jwt = ["dep:jsonwebtoken", "dep:reqwest"]
+mtls = ["dep:x509-parser", "dep:rustls-pki-types"]
+api-key = []
+chain = []
+# Exposes the process-global RBAC off switch (`disable_rbac` / `enable_rbac`)
+# outside this crate's own tests. For test binaries only — a build that enables
+# it can turn off every role check in the process. Off by default, so a shipped
+# binary cannot reach the switch at all.
+test-util = []
+
+[dev-dependencies]
+tempfile = "3"

@@ -1,0 +1,11 @@
+[
+  "examples/adk-separation-of-duties/payment_policy.dl",
+  "examples/langchain-information-flow/policy.dl",
+  "examples/langroid-information-flow/mls_policy.dl",
+  "examples/langroid-information-flow/toxic_flow_policy.dl",
+  "examples/message-flow/policy.dl",
+  "policies/common_policy.dl",
+  "crates/sasy-policy/src/compiler_allow_attribution_fixture.dl",
+  "crates/sasy-policy/src/compiler_inference_fixture.dl",
+  "souffle/common_policy.dl"
+]

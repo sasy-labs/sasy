@@ -1,0 +1,12 @@
+{
+  "type": "jwt",
+  "jwks_url": "https://YOUR-OIDC-ISSUER/.well-known/jwks.json",
+  "issuer": "https://YOUR-OIDC-ISSUER/",
+  "audience": "sasy",
+  "entity_claim": "sub",
+  "roles_claim": "roles",
+  "metadata_key": "authorization",
+  "token_prefix": "Bearer ",
+  "jwks_cache_seconds": 300,
+  "use_central_roles": true
+}

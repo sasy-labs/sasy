@@ -1,0 +1,185 @@
+---
+title: Configuration
+description: Configure the engine, identities, clients, and policies.
+---
+
+Engine options, identity mappings, client settings and policy facts serve different purposes. Changing one does not automatically change the others: a working connection does not grant an action permission, and a policy role check does not configure who receives that role.
+
+## Local profiles
+
+`sasy engine start` saves a client profile in `~/.sasy/profiles/NAME/` and
+selects it for Python SDK use across projects. It runs a local authenticated
+TLS engine in Docker; its credentials and graph storage persist in a Docker
+volume. See [local engine setup](/local-engine/) for named profiles and optional
+project `.env` output, and [CLI options](/cli/#local-engine-commands) for the
+launcher settings.
+
+Use the Rust binary's `sasy serve` command below when you need custom provider
+configuration or other server options beyond the Docker launcher.
+
+## Engine process
+
+Prepare the engine binary, certificates and local files using [building and local setup](/building/). Configure an independent full API key for each principal as described in [authentication](/authentication/); the example below assumes `config/auth/apikey.json` contains those literal keys.
+
+Start the engine explicitly:
+
+```bash
+target/full-release/release/sasy serve \
+  --addr 127.0.0.1:10089 \
+  --auth-provider config/auth/apikey.json \
+  --auth-config config/auth_config.yaml \
+  --transforms config/transforms.json \
+  --tls-cert certs/server.crt \
+  --tls-key certs/server.key \
+  --data-dir data/graph
+```
+
+The credential store lives at `<data-dir>/credentials.db` unless `--credentials-db` says otherwise.
+
+Keep suffix composition disabled on the server when using literal keys. Paths are relative to the process's working directory. Use a persistent data directory if policy bindings and observations must survive restarts.
+
+| Setting | Purpose and direct CLI default |
+| --- | --- |
+| `--addr` | gRPC listener; `127.0.0.1:10089`. |
+| `--data-dir` | Graph and engine state; `data/graph`. |
+| `--auth-provider` | Provider JSON file; no implicit authenticated provider. Startup refuses missing authentication unless local no-auth mode is explicitly enabled. |
+| `--auth-config` | Entity-to-role and tenant mappings in YAML. |
+| `--tls-cert`, `--tls-key` | Enable server TLS; not automatically enabled by bare `sasy serve`. |
+| `--tls-ca` | Trust root for verifying client certificates when using mTLS. |
+| `--evaluator` | Policy backend; `souffle`. |
+| `--query-timeout-secs` | Query deadline; `10`. An evaluation that runs past it denies the action. |
+| `--evaluator-stall-secs` | Unresponsive evaluator recovery threshold; `60`, and must be at least the query deadline. |
+| `--proxy-port` | Separate HTTP forward proxy; `0` disables it. |
+
+`--policy-metadata` and `--policy` are aliases for the same source-file option. The engine compiles that source for the Soufflé backends and reads its annotations; they are not separate inputs for logic and metadata. See [engine environment](/environment/) for runtime variables and [engine CLI](/cli/) for every `sasy serve` option. A [restricted engine](/building/#full-and-restricted-engines) runs only its baked profiles: neither `--evaluator` nor a source file gives it the ability to compile a policy. The forward proxy is a separate, unauthenticated-per-request listener; enabling it requires deliberate network and tenant configuration.
+
+### Raw forward proxy
+
+The raw HTTP forward proxy does **not authenticate callers**. Anyone who can
+reach its listener can use the configured tenant's stored credentials against
+hosts allowed by policy. Keep the loopback default (`--proxy-bind 127.0.0.1`),
+or isolate access at the network boundary; `--proxy-tenant` pins one tenant per
+listener, not a caller identity. Raw requests have no input-message ancestry.
+
+For plain HTTP forwarding, the raw proxy returns the upstream status and body
+but drops upstream response headers, including content type, cookies and cache
+controls. It is not a transparent general-purpose HTTP proxy. CONNECT relays
+encrypted bytes without credential injection or inspection of inner requests.
+These limitations concern the separate raw listener, not the authenticated
+gRPC `ProxyHTTP` API.
+
+## Identity and roles
+
+The provider file maps each full key to its authenticated identity, such as `worker`. The role file then describes what that identity may do:
+
+```yaml
+default_tenant: default
+entities:
+  worker:
+    tenant: default
+    roles:
+      - reference-monitor-user
+      - observability-writer
+      - observability-reader
+```
+
+Use the provider's authenticated identity value as the entity key. A missing mapping has no configured roles; omitting an entity's tenant uses `default_tenant`. Role names such as `reference-monitor-user` authorize service APIs. A policy can impose additional action-specific requirements with `HasRole(...)`.
+
+JWT claim mapping and mTLS identity configuration are described in [authentication](/authentication/). Credential sources and `--transforms` configure secrets used for approved request transforms; they do not replace caller authentication.
+
+## Python client and session policy
+
+Configure the SDK endpoint and trust explicitly. Set `SASY_API_KEY` to the key issued to this client. This example connects to the engine above:
+
+```python
+from pathlib import Path
+import os
+import sasy
+from sasy.auth.hooks import APIKeyAuthHook
+
+sasy.configure(
+    sasy_url="localhost:10089",
+    ca_path="certs/server.crt",
+    auth_hook=APIKeyAuthHook(api_key=os.environ["SASY_API_KEY"]),
+)
+
+with sasy.session(policy=Path("read-only.dl")):
+    # Record context and check actions through the instrumentation APIs.
+    pass
+```
+
+A `Path` loads a policy file; a plain string is interpreted as policy source. Omitting `policy` does not replace an existing session binding; a session without its own binding uses the tenant default. A session's policy binding and its recorded graph are separate from the SDK's connection settings. Supply `policy_metadata=[("setting", "value", "")]` alongside `policy=` when entering the session to provide policy configuration facts; those facts matter only if the policy reads them. `ActionMetadata` instead belongs to a particular proposed action.
+
+By default, leaving `sasy.session(...)` calls `EndSession`: it releases the evaluator, policy binding, session metadata and ownership while keeping recorded graph observations. Use `end_on_exit=False` when deliberately continuing a session across blocks, and end it explicitly when finished. Use a new session ID for a new conversation. Python teardown is best-effort, so a failed teardown may leave server state in place.
+
+Calling `sasy.configure()` with no arguments is optional. Python connection
+settings use this order:
+
+1. Explicit `sasy.configure(...)` or client constructor arguments.
+2. Exported environment variables.
+3. `.env` in the current working directory.
+4. The selected local-engine profile, only when no higher-priority endpoint is set.
+
+`SASY_URL` sets the endpoint. `SASY_API_KEY` supplies the full client key;
+`TLS_CA_PATH` supplies the CA that signs the server certificate. For mutual TLS,
+use `TLS_CERT_PATH` and `TLS_KEY_PATH` for the client certificate and private key.
+An explicit `auth_hook` overrides automatic API-key selection.
+
+The local profile is a connection bundle: its URL, client key, and CA belong
+together. If you set a different endpoint, the SDK does not borrow credentials
+or TLS settings from that profile. Configure the endpoint's own trust and
+identity. `SASY_ENGINE_PROFILE` selects a named profile for one process;
+otherwise `~/.sasy/selected-profile` chooses it. A requested missing profile is
+an error. If no profile or endpoint is configured, the SDK still has no default
+server and raises `SasyEndpointNotConfigured` when a connection is needed.
+
+A profile's client identity is shared by all applications using its key.
+`sasy.session(entity=...)` and instrumentation agent IDs are labels for recorded
+activity; they do not change the authenticated principal, tenant, or roles.
+
+## Session lifetime and background work
+
+Installing hooks with `sasy.instrument()` does not activate a session. By
+default, automatic hooks pass through unchanged outside `sasy.session(...)`;
+manual recording and authorization APIs require an active session and raise
+otherwise. To opt into a process-wide default:
+
+```python
+sasy.configure(process_global_session=True)
+sasy.instrument()
+```
+
+This creates a generated session ID shared by otherwise unscoped work in the
+process. An explicit `sasy.session(...)` overrides it. The default uses the
+tenant's default policy; it is distinct from the tenant-global graph selected
+by `sasy.global_session()`. Passing `process_global_session=False` disables it;
+omitting the option preserves its current setting.
+
+Async tasks inherit the context in which they are created, including the SASY
+session. Await all protected work before leaving the session: the default
+`end_on_exit=True` closes its shared lifetime, and inherited work then raises
+instead of running without checks or falling back to the process default.
+Use `end_on_exit=False` only when deliberately keeping that session open.
+Ending it later, through another block or `end_session(id)` from `sasy.policy`, also
+revokes contexts inherited from its earlier blocks.
+
+`asyncio.to_thread()` also copies the context. A raw thread pool does not:
+use a separate `contextvars.copy_context()` for each submitted worker, or enter
+a session in the worker. Likewise, awaiting a task created outside the session
+does not give it the awaiting task's session. Without propagated context or a
+process default, automatic hooks in that worker are inactive.
+
+## Python instrumentation
+
+`sasy.configure(...)` sets connection and instrumentation options when you need explicit values; it does not install framework hooks. `sasy.instrument()` does, and is called once at startup, after any explicit `sasy.configure(...)` and before any agent is built:
+
+- With no arguments, it enables the adapter for each supported framework that is installed ([LangChain](/integrations/langchain/), [Google ADK](/integrations/google-adk/) and [Langroid](/integrations/langroid/)). `make install` and `uv add sasy` install none of the frameworks; `sasy[all]` installs all three and OpenTelemetry, or choose one framework’s extra.
+- `langchain=`, `adk=` and `langroid=` each take `True` (require the framework: an error if it is not installed) or `False` (skip it). Left out, an installed framework its adapter cannot be used with (LangChain or ADK at a version SASY does not support, or a framework the adapter cannot import) is skipped: its agents will NOT be checked by SASY, and the first time the application uses that framework a `SasyInstrumentationWarning` says so (once per process; an application that never uses it gets no warning). With `True` the same problem is an error; with `False` the framework is skipped silently. See [supplied Python adapters](/instrumentation/#supplied-python-adapters).
+- `http=` controls the [HTTP hooks](/instrumentation/#http-hooks), which are off by default. Pass `http=True` when you need credential injection or want the policy to check the agent's `httpx` and `requests` calls; the policy must then allow each host the agent calls, including the model provider's.
+- `sasy.instrument(http=True, langchain=False, adk=False, langroid=False)` enables only the HTTP hooks. Use this with your own adapter.
+
+Use [add a framework](/instrumentation/) to cover your own orchestration and dispatch paths.
+
+Keep `tool_policy_fail_closed=True`, the default, so Langroid tool handlers stop when the reference monitor is unavailable. Setting it to `False` allows those calls to proceed on check errors and is unsuitable for enforcement. An explicit policy denial still blocks the tool.
+
+`log_policy_decisions=True` enables decision logging; `log_transforms=True` includes applied transforms. `otel_enabled` and `otel_service_name` control OpenTelemetry tracing. These observability options do not grant permission or replace checks at dispatch.

@@ -1,0 +1,9 @@
+{
+  "name": "policy-compiler",
+  "version": "0.3.0",
+  "description": "Read and write SASY Datalog policies against the public schema and validator",
+  "author": {
+    "name": "Sasy, Inc."
+  },
+  "repository": "https://github.com/sasy-labs/sasy"
+}

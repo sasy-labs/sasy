@@ -1,0 +1,131 @@
+name: Build and deploy public docs
+
+on:
+  push:
+    branches: [main, 'release/**']
+    paths:
+      - 'docs-site/**'
+      - 'release/public-core/**'
+      - 'scripts/export_public_core.py'
+      - '.github/workflows/deploy-docs.yml'
+  pull_request:
+    paths:
+      - 'docs-site/**'
+      - 'release/public-core/**'
+      - 'scripts/export_public_core.py'
+      - '.github/workflows/deploy-docs.yml'
+  workflow_dispatch:
+    inputs:
+      deploy:
+        description: 'Deploy the public docs to the configured Cloudflare Pages project'
+        type: boolean
+        default: false
+
+permissions: {}
+
+concurrency:
+  group: public-docs-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+      - name: Select only the public documentation tree
+        run: |
+          if test -f release/public-core/manifest.json; then
+            python scripts/export_public_core.py "$RUNNER_TEMP/public-source"
+            cp -R "$RUNNER_TEMP/public-source/docs-site" "$RUNNER_TEMP/public-docs"
+          else
+            cp -R docs-site "$RUNNER_TEMP/public-docs"
+          fi
+          # Prevent an accidental deployment of the legacy private docs site.
+          test -f "$RUNNER_TEMP/public-docs/src/content/docs/quickstart.mdx"
+          test -f "$RUNNER_TEMP/public-docs/src/content/docs/configuration.mdx"
+          test ! -d "$RUNNER_TEMP/public-docs/src/content/docs/translation-proof"
+          test ! -d "$RUNNER_TEMP/public-docs/src/content/docs/coa-policy-translation"
+      - name: Build public documentation
+        run: |
+          cd "$RUNNER_TEMP/public-docs"
+          npm ci --no-audit --no-fund
+          npm run build
+          test -s dist/index.html
+          test -s dist/quickstart/index.html
+          test -s dist/instrumentation/index.html
+      - uses: actions/upload-artifact@v7
+        with:
+          name: public-docs
+          path: ${{ runner.temp }}/public-docs/dist
+          if-no-files-found: error
+
+  deploy:
+    # Publication is an explicit dispatch after release review. PRs only build.
+    if: github.repository == 'sasy-labs/sasy' && github.repository_id == '1405994907' && github.event_name == 'workflow_dispatch' && inputs.deploy
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: public-docs
+      url: https://docs.sasy.ai
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+      - uses: actions/download-artifact@v7
+        with:
+          name: public-docs
+          path: public-docs
+      - name: Deploy the tested static artifact
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          PUBLIC_DOCS_PROJECT: ${{ vars.SASY_PUBLIC_DOCS_PROJECT }}
+        run: |
+          test -n "$CLOUDFLARE_API_TOKEN" || { echo 'Set CLOUDFLARE_API_TOKEN with Pages edit access'; exit 1; }
+          test -n "$CLOUDFLARE_ACCOUNT_ID" || { echo 'Set CLOUDFLARE_ACCOUNT_ID'; exit 1; }
+          test -n "$PUBLIC_DOCS_PROJECT" || { echo 'Create a public-only Pages project and set SASY_PUBLIC_DOCS_PROJECT'; exit 1; }
+          # Create the named direct-upload project if it is absent. Never change
+          # the existing private docs project's settings or deployments.
+          python - <<'PY'
+          import json, os, re, urllib.error, urllib.request
+          class NoRedirect(urllib.request.HTTPRedirectHandler):
+              def redirect_request(self, req, fp, code, msg, headers, newurl):
+                  raise SystemExit('Cloudflare API redirect refused')
+          opener = urllib.request.build_opener(NoRedirect())
+          project = os.environ['PUBLIC_DOCS_PROJECT']
+          assert re.fullmatch(r'[a-z0-9][a-z0-9-]{0,57}', project), 'Invalid Pages project name'
+          account = os.environ['CLOUDFLARE_ACCOUNT_ID']
+          assert re.fullmatch(r'[a-f0-9]{32}', account), 'Invalid Cloudflare account ID'
+          root = f'https://api.cloudflare.com/client/v4/accounts/{account}/pages/projects'
+          headers = {'Authorization': 'Bearer ' + os.environ['CLOUDFLARE_API_TOKEN'],
+                     'Content-Type': 'application/json'}
+          try:
+              with opener.open(urllib.request.Request(root + '/' + project, headers=headers), timeout=30) as response:
+                  result = json.load(response)
+          except urllib.error.HTTPError as error:
+              if error.code != 404:
+                  raise SystemExit(f'Pages project lookup failed (HTTP {error.code}); check token permissions')
+              request = urllib.request.Request(root, headers=headers, method='POST',
+                  data=json.dumps({'name': project, 'production_branch': 'main'}).encode())
+              try:
+                  with opener.open(request, timeout=30) as response:
+                      result = json.load(response)
+              except urllib.error.HTTPError as error:
+                  raise SystemExit(f'Pages project creation failed (HTTP {error.code})')
+          assert result.get('success'), 'Cloudflare Pages did not confirm the project'
+          print('Public Pages project ready:', project)
+          PY
+          npx --yes wrangler@4.129.1 pages deploy public-docs --project-name "$PUBLIC_DOCS_PROJECT" --branch main

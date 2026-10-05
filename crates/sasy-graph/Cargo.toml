@@ -1,0 +1,36 @@
+[package]
+name = "sasy-graph"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Embedded graph store (petgraph + RocksDB) with optional background Neo4j sync"
+
+[lib]
+name = "sasy_graph"
+
+[features]
+# Neo4j background sync is the ONLY reqwest user in this crate. A build that
+# does not mirror its graph to Neo4j uses --no-default-features and drops
+# reqwest (and the hyper/h2 client tree) with it.
+default = ["neo4j-sync"]
+neo4j-sync = ["dep:reqwest"]
+
+[dependencies]
+sasy-common = { workspace = true }
+petgraph = { workspace = true }
+rocksdb = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = "0.10"
+prost = { workspace = true }
+# Neo4j background sync (neo4j_sync) POSTs graph updates over HTTP; gated.
+reqwest = { workspace = true, optional = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+thiserror = { workspace = true }
+uuid = { workspace = true }
+parking_lot = { workspace = true }
+tempfile = "3"

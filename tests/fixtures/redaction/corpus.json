@@ -1,0 +1,1573 @@
+{
+  "comment": [
+    "One input, one output. `tests/fixtures/redaction/rules.json` pins the names and the",
+    "patterns; this file pins what they do to a string.",
+    "The Rust crate crates/sasy-redaction reads it: its tests",
+    "run the whole corpus, so a change to the crate that moves any of these",
+    "outputs fails its suite. The suite also asserts a minimum size before",
+    "comparing, so a merge that emptied this array would fail rather than",
+    "leave a green suite pinning nothing.",
+    "Every secret-shaped literal here is synthetic. Inputs deliberately stay",
+    "clear of the one place a regular-expression engine without backtracking",
+    "differs by design: a PEM body past 8000 characters, which a bounded",
+    "pattern stops reading and an unbounded one does not. One difference is",
+    "not by design and is not pinned here either: a U+FEFF is whitespace to",
+    "JavaScript's `\\s` and not to Python's or Rust's. The URL run, the URL",
+    "userinfo and the parameter value do not use `\\s` at all - they carry",
+    "the `space_chars` class written out character by character - so what is",
+    "left of that difference is the header-name boundary and the",
+    "`-u user:pass` flag, where a header line holding a U+FEFF splits into",
+    "two tokens under a JavaScript `\\s` and stays one token here.",
+    "The JWT segments are unbounded: a bound buys nothing, because the",
+    "segment class cannot be followed by the `.` that has to come next.",
+    "The rows from `def login(password=...` down are the inputs where a",
+    "credential shows up in ordinary developer traffic: the .env body, the",
+    "JSON, YAML and TOML configs, the Python signature, the shell case arm,",
+    "the Makefile line, the curl -H / -u / --password lines, the docker -e",
+    "line, the psql and git userinfo URLs, the JSON-encoded quoted URL, the",
+    "markdown link, the HTML-escaped URL, the connection string, the",
+    ";-separated shell chain, and the header readings.",
+    "The rows after those are the shape readings: a word that opens like a",
+    "fixed-length key (ASIAPACIFICREGION2026), a branch name and a file name",
+    "that open like an OpenAI key, a PEM block that was never closed followed",
+    "by prose and a whole key, a pre-signed URL's signature field, and two",
+    "lines ended by a bare carriage return.",
+    "The rows after those cover the `==`, `===` and",
+    "`:=` operators, which the separator must not eat; a reference longer",
+    "than fifteen characters; a numeric JSON value, which has to come back",
+    "as a quoted marker or the blob stops parsing; a name behind an escaped",
+    "quote in double-encoded JSON; an empty userinfo user; a PEM key inside",
+    "a JSON-encoded tool argument; the docker-compose and",
+    "~/.aws/credentials spellings of an environment-variable name, and a git",
+    "diff's removed line; the authorization values that are prose rather than",
+    "credentials; a header whose value is quoted and whose name is not; and",
+    "Unicode look-alikes for a name, which must not fold onto it.",
+    "One row is a limit rather than a reading: a Kubernetes pod `env:`",
+    "list, whose name and value stand on two lines of their own, is pinned",
+    "byte-for-byte untouched.",
+    "The rows after those pin the quoted reader's two rules: a quoted value never crosses a line break, in raw text and one encoding level down, and a quoted value whose content holds no ASCII letter and no digit is not a credential. So a captured `Enter password: ` prompt, a `DB_PASSWORD=` line with an empty value and a shell script that reads a password on a later line all come back byte-for-byte, while a prefixed line - a comment with an apostrophe in it, a file:line prefix, prose - still redacts.",
+    "One group is the dotted name. `PARAM_DELIMITER` excludes the `.`, so `spring.datasource.password=`, `db.password=`, `mail.smtp.password=`, `-Dspring.datasource.password=` and `--set postgres.password=` are read by no rule on their own. They are read under a glued `=` and under nothing else: the spaced assignment (`self.password = get_pw()`) and the colon form of a dotted name are pinned untouched here and stated as limits, because the exclusion is what keeps ordinary source unread.",
+    "Fifteen rows cover the header name behind an escaped quote. Seven are the header-only names - authorization, proxy-authorization, cookie, set-cookie, x-auth-token, x-goog-api-key, x-subscription-token - in double-encoded JSON: the header name pattern admits the escape between the name and its colon, so a request-headers file written as JSON, and a tool result quoting one back, are both read. The empty value and the single-encoded blob are the controls, and x-api-key is the name the parameter tier already reached. Four are the dotted name reaching the header-word exemption: `gateway.api-key=` and `nginx.x-api-key=` keep a word value, as the bare spellings do. `svc.apikey=not-set` still goes, because `apikey` without the hyphen is not one of the nine header names under any spelling - the bare `apikey: not-set` goes too, so the two readings agree.",
+    "Four rows are limits made visible rather than readings. Two pin the backslash that stands in front of a raw line break: it escapes the break in no shell the reader may assume, so the read ends there instead of running on to a closing quote on the next line and deleting a line of a recorded two-line Write. One pins a quoted password written only in non-ASCII letters: the letter-or-digit test is ASCII-only, so a value made solely of non-ASCII letters or of punctuation is kept - widening the test to Unicode would reopen the splice it closes. The last one is the array splice: a JSON array element that ends on a credential name next to a non-string element puts `, 1, ` between the string's own closer and the next quote, that span carries a digit, and the marker goes over it, so valid JSON comes out invalid. It is pinned with what ships and named as an exemption in each suite's JSON invariant; closing it needs a JSON reader rather than a rule about characters. An object is safe, because a quoted key always puts a bare `, ` there.",
+    "Two rows are known limits, and each is found by what it holds rather than by where it sits: the HAR headers list - `{\"headers\": [{\"name\": \"Authorization\", \"value\": \"...\"}]}` - where the header name is the value of a `name` field rather than the key of its own pair, so no reading here finds it; and the `.netrc` line - `machine api.example.com login deploy password hunter2hunter2` - which separates `password` from its value with a space and nothing else, while every separator form here needs an `=` or a `:`. Both are pinned byte-for-byte untouched.",
+    "Five rows are the escaped break in front of a header name, each paired with the raw twin it must agree with: `api-key` and `x-api-key` standing on the second line of a JSON-encoded body, once with a word value that stays (`not-set`, `application/json`, `N/A`, one of them in a numbered Read result) and once with a real key that goes. Three rows are the doubly encoded private key: a Google service-account file, whose `private_key` field already spells its line breaks `\\n`, written with the Write tool and read back through a tool result, so each break arrives as two backslashes and an `n` - and the singly encoded field on its own as the control. One row is a query-parameter name that must not fold under Unicode: a query string whose parameter name is spelled with the Kelvin sign (U+212A) in place of its first letter folds onto `key` under Unicode case folding and must not be read as `key`, because the name comparison is ASCII-only; the row is pinned untouched.",
+    "Thirty-five rows are the shape crossing. `SHAPE_BOUNDARY` admits the two-character escape as well as a real line break, so a shape is read on any line of a JSON-encoded body and not only the first. Every shape that fires is pinned three ways - once after `\\n`, once after `\\t` in the numbered form a Read result takes, and once in raw text as the twin they must match: the PEM block, the GitHub, GitLab, npm and Slack tokens, the AWS key id, the OpenAI key, the Google API key and the JWT. With them: a Read of a key file whose numbered lines carry the whole block, a Write whose key starts on the second line after a comment, a file holding two key blocks where both must go, the `-u admin:` flag on a second line with its raw twin, a `postgresql://` userinfo password after an escaped break and after a tab - the one boundary that needs no escape handling, because the letter of the escape is also how a scheme begins - and, as the control, a shape glued to the end of a word (`a\\thunterghp_...`), which stays."
+  ],
+  "cases": [
+    {
+      "input": "Client error '400 Bad Request' for url 'https://h.example/v1/models:generate?key=AIzaSyDaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'",
+      "expected": "Client error '400 Bad Request' for url 'https://h.example/v1/models:generate?key=[redacted]'",
+      "count": 1
+    },
+    {
+      "input": "redirected to HTTPS://host/v1?key=AIzaSyDaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa&page=2",
+      "expected": "redirected to HTTPS://host/v1?key=[redacted]&page=2",
+      "count": 1
+    },
+    {
+      "input": "https://h/x?token=abc&q=hi#frag",
+      "expected": "https://h/x?token=[redacted]&q=hi#frag",
+      "count": 1
+    },
+    {
+      "input": "https://h/x?API%5FKEY=v&other=keep",
+      "expected": "https://h/x?API%5FKEY=[redacted]&other=keep",
+      "count": 1
+    },
+    {
+      "input": "https://h/x?key=SECRETVALUE&amp;page=2",
+      "expected": "https://h/x?key=[redacted]&amp;page=2",
+      "count": 1
+    },
+    {
+      "input": "https://h/x?a=1;key=SECRETVALUE",
+      "expected": "https://h/x?a=1;key=[redacted]",
+      "count": 1
+    },
+    {
+      "input": "https://h/x?key=&page=2",
+      "expected": "https://h/x?key=&page=2",
+      "count": 0
+    },
+    {
+      "input": "see https://h/x?key=[redacted]&page=2 for the call",
+      "expected": "see https://h/x?key=[redacted]&page=2 for the call",
+      "count": 0
+    },
+    {
+      "input": "https://docs.example/en-US/docs/Web/HTTP/Status/400",
+      "expected": "https://docs.example/en-US/docs/Web/HTTP/Status/400",
+      "count": 0
+    },
+    {
+      "input": "--password=hunter2",
+      "expected": "--password=[redacted]",
+      "count": 1
+    },
+    {
+      "input": "-Dpassword=hunter2",
+      "expected": "-Dpassword=[redacted]",
+      "count": 1
+    },
+    {
+      "input": "&amp;key=SUPERSECRETVALUE1",
+      "expected": "&amp;key=[redacted]",
+      "count": 1
+    },
+    {
+      "input": "x;key=SUPERSECRETVALUE1",
+      "expected": "x;key=[redacted]",
+      "count": 1
+    },
+    {
+      "input": "?key=SUPERSECRETVALUE1",
+      "expected": "?key=[redacted]",
+      "count": 1
+    },
+    {
+      "input": "curl -d \"access_token=0paquesecret&user=x\" https://h/t",
+      "expected": "curl -d \"access_token=[redacted]&user=x\" https://h/t",
+      "count": 1
+    },
+    {
+      "input": "{\"url.query\": \"page=2&access_token=xyzsecret&code=abcsecret\"}",
+      "expected": "{\"url.query\": \"page=2&access_token=[redacted]&code=[redacted]\"}",
+      "count": 2
+    },
+    {
+      "input": "{\"url.query\": \"password=0paquesecret\"}",
+      "expected": "{\"url.query\": \"password=[redacted]\"}",
+      "count": 1
+    },
+    {
+      "input": "OPENAI_API_KEY=notasecretshapedvalue",
+      "expected": "OPENAI_API_KEY=[redacted]",
+      "count": 1
+    },
+    {
+      "input": "session=requests.Session()",
+      "expected": "session=requests.Session()",
+      "count": 0
+    },
+    {
+      "input": "if code==200:\n    return session.get(url)",
+      "expected": "if code==200:\n    return session.get(url)",
+      "count": 0
+    },
+    {
+      "input": "key=value\nname=thing\ntimeout=30",
+      "expected": "key=value\nname=thing\ntimeout=30",
+      "count": 0
+    },
+    {
+      "input": "token = \"abc\"",
+      "expected": "token = \"abc\"",
+      "count": 0
+    },
+    {
+      "input": "mycode=42",
+      "expected": "mycode=42",
+      "count": 0
+    },
+    {
+      "input": "the_token=abc",
+      "expected": "the_token=abc",
+      "count": 0
+    },
+    {
+      "input": "brisk-key=value",
+      "expected": "brisk-key=value",
+      "count": 0
+    },
+    {
+      "input": "risk-assessment-summary.md",
+      "expected": "risk-assessment-summary.md",
+      "count": 0
+    },
+    {
+      "input": "The user asked to book a flight from SFO to JFK. Cost: 412 USD.",
+      "expected": "The user asked to book a flight from SFO to JFK. Cost: 412 USD.",
+      "count": 0
+    },
+    {
+      "input": "{\"x-request-id\": \"hunter2\", \"code\": \"print(1)\"}",
+      "expected": "{\"x-request-id\": \"hunter2\", \"code\": \"print(1)\"}",
+      "count": 0
+    },
+    {
+      "input": "request headers:\nAuthorization: some-credential-material-7f3a\naccept: */*",
+      "expected": "request headers:\nAuthorization: [redacted]\naccept: */*",
+      "count": 1
+    },
+    {
+      "input": "{\"http.request.header.authorization\": \"supersecretvalue\", \"http.method\": \"POST\"}",
+      "expected": "{\"http.request.header.authorization\": \"[redacted]\", \"http.method\": \"POST\"}",
+      "count": 1
+    },
+    {
+      "input": "{\"http.request.header.cookie\": [\"a=1\", \"b=2\"]}",
+      "expected": "{\"http.request.header.cookie\": [\"[redacted]\"]}",
+      "count": 1
+    },
+    {
+      "input": "{'x-api-key': 'supersecretvalue'}",
+      "expected": "{'x-api-key': '[redacted]'}",
+      "count": 1
+    },
+    {
+      "input": "curl -H \"Authorization: Basic dXNlcjpwYXNzd29yZA==\" https://api.example/x",
+      "expected": "curl -H \"Authorization: [redacted]\" https://api.example/x",
+      "count": 1
+    },
+    {
+      "input": "curl -H \"x-api-key: OPAQUESECRETVALUE123\" https://api.example/x",
+      "expected": "curl -H \"x-api-key: [redacted]\" https://api.example/x",
+      "count": 1
+    },
+    {
+      "input": "> Authorization: Basic dXNlcjpwYXNzd29yZA==",
+      "expected": "> Authorization: [redacted]",
+      "count": 1
+    },
+    {
+      "input": "2026-01-01 DEBUG authorization: Basic dXNlcjpwYXNzd29yZA==",
+      "expected": "2026-01-01 DEBUG authorization: [redacted]",
+      "count": 1
+    },
+    {
+      "input": "{\"command\": \"curl -H \\\"Authorization: Basic ABCSECRET\\\" https://h/\"}",
+      "expected": "{\"command\": \"curl -H \\\"Authorization: [redacted]\\\" https://h/\"}",
+      "count": 1
+    },
+    {
+      "input": "{\"command\": \"curl -d \\\"code=abc\\\" https://h/\"}",
+      "expected": "{\"command\": \"curl -d \\\"code=abc\\\" https://h/\"}",
+      "count": 0
+    },
+    {
+      "input": "{\"command\": \"curl -d \\\"password=abc123\\\" https://h/\"}",
+      "expected": "{\"command\": \"curl -d \\\"password=[redacted]\\\" https://h/\"}",
+      "count": 1
+    },
+    {
+      "input": "the call failed with sk-proj-AAAAAAAAAAAAAAAAAAAA1234 attached",
+      "expected": "the call failed with [redacted:openai-key] attached",
+      "count": 1
+    },
+    {
+      "input": "worker ghp_cccccccccccccccccccccccccccccccccccc on AKIAQQQQQQQQQQQQQQQQ",
+      "expected": "worker [redacted:github-token] on [redacted:aws-access-key-id]",
+      "count": 2
+    },
+    {
+      "input": "sent Bearer zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz upstream",
+      "expected": "sent Bearer [redacted:bearer] upstream",
+      "count": 1
+    },
+    {
+      "input": "the deploy key is\n-----BEGIN RSA PRIVATE KEY-----\nMIIsyntheticsyntheticsynthetic\n-----END RSA PRIVATE KEY-----\nand that is all",
+      "expected": "the deploy key is\n[redacted:pem-private-key]\nand that is all",
+      "count": 1
+    },
+    {
+      "input": "id_token=eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJzeW50aGV0aWMifQ.AAAABBBBCCCC",
+      "expected": "id_token=[redacted]",
+      "count": 1
+    },
+    {
+      "input": "def login(password=hunter2, secret=None):",
+      "expected": "def login(password=[redacted], secret=None):",
+      "count": 1
+    },
+    {
+      "input": "login(user='admin', password=os.environ['PW'])",
+      "expected": "login(user='admin', password=os.environ['PW'])",
+      "count": 0
+    },
+    {
+      "input": "--password=*)",
+      "expected": "--password=*)",
+      "count": 0
+    },
+    {
+      "input": "api_key=API_KEY)",
+      "expected": "api_key=API_KEY)",
+      "count": 0
+    },
+    {
+      "input": "password=None",
+      "expected": "password=None",
+      "count": 0
+    },
+    {
+      "input": "secret=$MY_SECRET",
+      "expected": "secret=$MY_SECRET",
+      "count": 0
+    },
+    {
+      "input": "pwd=pw",
+      "expected": "pwd=pw",
+      "count": 0
+    },
+    {
+      "input": "password=correcthorsebatterystaple",
+      "expected": "password=[redacted]",
+      "count": 1
+    },
+    {
+      "input": "password = \"hunter2\"",
+      "expected": "password = \"[redacted]\"",
+      "count": 1
+    },
+    {
+      "input": "password = \"\"",
+      "expected": "password = \"\"",
+      "count": 0
+    },
+    {
+      "input": "password=\"he\\\"llo1\"",
+      "expected": "password=\"[redacted]\"",
+      "count": 1
+    },
+    {
+      "input": "mysql --password=hunter2;echo hi",
+      "expected": "mysql --password=[redacted];echo hi",
+      "count": 1
+    },
+    {
+      "input": "Server=db;Database=app;password=s3cr3tpw;Encrypt=true",
+      "expected": "Server=db;Database=app;password=[redacted];Encrypt=true",
+      "count": 1
+    },
+    {
+      "input": "--paſsword=hunter2",
+      "expected": "--paſsword=hunter2",
+      "count": 0
+    },
+    {
+      "input": "DB_PASSWORD=hunter2\nPOSTGRES_PASSWORD=s3cr3tpg\nMAX_TOKENS=4096\nAWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY\n",
+      "expected": "DB_PASSWORD=[redacted]\nPOSTGRES_PASSWORD=[redacted]\nMAX_TOKENS=4096\nAWS_SECRET_ACCESS_KEY=[redacted]\n",
+      "count": 3
+    },
+    {
+      "input": "{\"db\": {\"user\": \"app\", \"password\": \"s3cr3tpw\"}}",
+      "expected": "{\"db\": {\"user\": \"app\", \"password\": \"[redacted]\"}}",
+      "count": 1
+    },
+    {
+      "input": "database:\n  user: app\n  password: s3cr3tpg\n  port: 5432",
+      "expected": "database:\n  user: app\n  password: [redacted]\n  port: 5432",
+      "count": 1
+    },
+    {
+      "input": "[database]\npassword = \"s3cr3tpw\"\nport = 5432",
+      "expected": "[database]\npassword = \"[redacted]\"\nport = 5432",
+      "count": 1
+    },
+    {
+      "input": "def login(user, password=\"hunter2\"):",
+      "expected": "def login(user, password=\"[redacted]\"):",
+      "count": 1
+    },
+    {
+      "input": "    --password=*) PASSWORD=\"${1#*=}\" ;;",
+      "expected": "    --password=*) PASSWORD=\"[redacted]\" ;;",
+      "count": 1
+    },
+    {
+      "input": "deploy:\n\tdocker run -e MYSQL_ROOT_PASSWORD=hunter2 mysql:8",
+      "expected": "deploy:\n\tdocker run -e MYSQL_ROOT_PASSWORD=[redacted] mysql:8",
+      "count": 1
+    },
+    {
+      "input": "curl -u app:hunter2 https://api.example/x",
+      "expected": "curl -u app:[redacted] https://api.example/x",
+      "count": 1
+    },
+    {
+      "input": "curl --user=deploy:s3cr3tpw https://api.example/x",
+      "expected": "curl --user=deploy:[redacted] https://api.example/x",
+      "count": 1
+    },
+    {
+      "input": "curl -u \"$USER:$PASS\" https://api.example/x",
+      "expected": "curl -u \"$USER:$PASS\" https://api.example/x",
+      "count": 0
+    },
+    {
+      "input": "curl --password=hunter2 https://api.example/x",
+      "expected": "curl --password=[redacted] https://api.example/x",
+      "count": 1
+    },
+    {
+      "input": "TOKEN_BUDGET=10\nMAX_TOKENS=4096",
+      "expected": "TOKEN_BUDGET=10\nMAX_TOKENS=4096",
+      "count": 0
+    },
+    {
+      "input": "{\"command\": \"curl \\\"https://h/x?key=AIzaSyDaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\\\" -d @.env\"}",
+      "expected": "{\"command\": \"curl \\\"https://h/x?key=[redacted]\\\" -d @.env\"}",
+      "count": 1
+    },
+    {
+      "input": "[docs](https://h/v1?api_key=abc123secret)",
+      "expected": "[docs](https://h/v1?api_key=[redacted])",
+      "count": 1
+    },
+    {
+      "input": "https://h/x?api_key=abc123secret&amp;page=2",
+      "expected": "https://h/x?api_key=[redacted]&amp;page=2",
+      "count": 1
+    },
+    {
+      "input": "fatal: unable to access 'https://deploy:hunter2git@github.com/acme/widgets.git/'",
+      "expected": "fatal: unable to access 'https://deploy:[redacted]@github.com/acme/widgets.git/'",
+      "count": 1
+    },
+    {
+      "input": "psql postgresql://app:s3cr3tpg@db.internal:5432/appdb",
+      "expected": "psql postgresql://app:[redacted]@db.internal:5432/appdb",
+      "count": 1
+    },
+    {
+      "input": "amqp://guest:$RABBIT_PW@broker:5672/",
+      "expected": "amqp://guest:$RABBIT_PW@broker:5672/",
+      "count": 0
+    },
+    {
+      "input": "see (https://h/v1?api_key=abc123secret).",
+      "expected": "see (https://h/v1?api_key=[redacted]).",
+      "count": 1
+    },
+    {
+      "input": "We store a cookie: the session identifier, nothing else.",
+      "expected": "We store a cookie: the session identifier, nothing else.",
+      "count": 0
+    },
+    {
+      "input": "Authorization: Bearer <YOUR_TOKEN>",
+      "expected": "Authorization: Bearer <YOUR_TOKEN>",
+      "count": 0
+    },
+    {
+      "input": "2026-01-01 DEBUG authorization: Bearer eyJhbGciOiJIUzI1NiJ9 host: api.example.com",
+      "expected": "2026-01-01 DEBUG authorization: [redacted] host: api.example.com",
+      "count": 1
+    },
+    {
+      "input": "curl -H authorization:abc123def https://a.example.com | tee out.txt",
+      "expected": "curl -H authorization:[redacted] https://a.example.com | tee out.txt",
+      "count": 1
+    },
+    {
+      "input": "curl -H Authorization:$GH_TOKEN https://a.example.com",
+      "expected": "curl -H Authorization:$GH_TOKEN https://a.example.com",
+      "count": 0
+    },
+    {
+      "input": "curl -b cookie:sid=abc123 https://a.example.com",
+      "expected": "curl -b cookie:[redacted] https://a.example.com",
+      "count": 1
+    },
+    {
+      "input": "Authorization: Basic dXNlcjpwYXNz\r\nX-Api-Key: abc123def\r\n",
+      "expected": "Authorization: [redacted]\r\nX-Api-Key: [redacted]\r\n",
+      "count": 2
+    },
+    {
+      "input": "x-api-key: is not set here",
+      "expected": "x-api-key: is not set here",
+      "count": 0
+    },
+    {
+      "input": "Set-Cookie: sid=abc123def; HttpOnly",
+      "expected": "Set-Cookie: [redacted]",
+      "count": 1
+    },
+    {
+      "input": "ASIAPACIFICREGION2026 is the region we deploy to",
+      "expected": "ASIAPACIFICREGION2026 is the region we deploy to",
+      "count": 0
+    },
+    {
+      "input": "AKIAMANAGEMENTREPORT2 filed under Q3",
+      "expected": "AKIAMANAGEMENTREPORT2 filed under Q3",
+      "count": 0
+    },
+    {
+      "input": "glpat-aaaaaaaaaaaaaaaaaaaaXYZ is a branch name",
+      "expected": "glpat-aaaaaaaaaaaaaaaaaaaaXYZ is a branch name",
+      "count": 0
+    },
+    {
+      "input": "npm_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaXYZ is not a token",
+      "expected": "npm_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaXYZ is not a token",
+      "count": 0
+    },
+    {
+      "input": "AKIAIOSFODNN7EXAMPLE, rotate it",
+      "expected": "[redacted:aws-access-key-id], rotate it",
+      "count": 1
+    },
+    {
+      "input": "checkout sk-refactor-authentication now",
+      "expected": "checkout sk-refactor-authentication now",
+      "count": 0
+    },
+    {
+      "input": "open docs/sk-quickstart-guide-2026.md please",
+      "expected": "open docs/sk-quickstart-guide-2026.md please",
+      "count": 0
+    },
+    {
+      "input": "OPENAI_API_KEY=sk-proj-AAAAAAAAAAAAAAAAAAAA1234 was set.",
+      "expected": "OPENAI_API_KEY=[redacted] was set.",
+      "count": 1
+    },
+    {
+      "input": "-----BEGIN RSA PRIVATE KEY-----\nMIIhalfwritten\nthe tail of this paste is missing, and this sentence is content\n-----BEGIN RSA PRIVATE KEY-----\nMIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII\nMIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII\nMIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII\n-----END RSA PRIVATE KEY-----\n",
+      "expected": "-----BEGIN RSA PRIVATE KEY-----\nMIIhalfwritten\nthe tail of this paste is missing, and this sentence is content\n[redacted:pem-private-key]\n",
+      "count": 1
+    },
+    {
+      "input": "https://h/x?X-Amz-Signature=abc123deadbeef&X-Amz-Date=2026",
+      "expected": "https://h/x?X-Amz-Signature=[redacted]&X-Amz-Date=2026",
+      "count": 1
+    },
+    {
+      "input": "https://h/x?X-Goog-Signature=abc123deadbeef&other=keep",
+      "expected": "https://h/x?X-Goog-Signature=[redacted]&other=keep",
+      "count": 1
+    },
+    {
+      "input": "https://h/x?design=modern&resig=no",
+      "expected": "https://h/x?design=modern&resig=no",
+      "count": 0
+    },
+    {
+      "input": "Authorization: Bearer abc123def456ghi789jkl\rthis line is content",
+      "expected": "Authorization: [redacted]\rthis line is content",
+      "count": 1
+    },
+    {
+      "input": "password=s3cr3tpw\rEncrypt=true",
+      "expected": "password=[redacted]\rEncrypt=true",
+      "count": 1
+    },
+    {
+      "input": "ASIAPACIFICREGION2026-ASIA0123456789ABCDEF is one word and one key",
+      "expected": "ASIAPACIFICREGION2026-[redacted:aws-access-key-id] is one word and one key",
+      "count": 1
+    },
+    {
+      "input": "sk-abcdefghijklmnop1.markdown is a file",
+      "expected": "sk-abcdefghijklmnop1.markdown is a file",
+      "count": 0
+    },
+    {
+      "input": "redis://:s3cr3tredis@cache.internal:6379/0",
+      "expected": "redis://:[redacted]@cache.internal:6379/0",
+      "count": 1
+    },
+    {
+      "input": "REDIS_URL=redis://:s3cr3tredis@cache.internal:6379/0",
+      "expected": "REDIS_URL=redis://:[redacted]@cache.internal:6379/0",
+      "count": 1
+    },
+    {
+      "input": "amqp://:s3cr3tmq@broker.internal:5672/",
+      "expected": "amqp://:[redacted]@broker.internal:5672/",
+      "count": 1
+    },
+    {
+      "input": "if password == \"admin\":",
+      "expected": "if password == \"admin\":",
+      "count": 0
+    },
+    {
+      "input": "if (password === userInput) {",
+      "expected": "if (password === userInput) {",
+      "count": 0
+    },
+    {
+      "input": "assert secret == expected_secret",
+      "expected": "assert secret == expected_secret",
+      "count": 0
+    },
+    {
+      "input": "password := os.Getenv(\"DB_PASSWORD\")",
+      "expected": "password := os.Getenv(\"DB_PASSWORD\")",
+      "count": 0
+    },
+    {
+      "input": "PASSWORD := hunter2",
+      "expected": "PASSWORD := hunter2",
+      "count": 0
+    },
+    {
+      "input": "password = settings.DATABASE_PASSWORD",
+      "expected": "password = settings.DATABASE_PASSWORD",
+      "count": 0
+    },
+    {
+      "input": "password = config.database.password",
+      "expected": "password = config.database.password",
+      "count": 0
+    },
+    {
+      "input": "const password = process.env.DB_PASSWORD;",
+      "expected": "const password = process.env.DB_PASSWORD;",
+      "count": 0
+    },
+    {
+      "input": "password = self._resolve_password",
+      "expected": "password = self._resolve_password",
+      "count": 0
+    },
+    {
+      "input": "password = correcthorsebatterystaple",
+      "expected": "password = [redacted]",
+      "count": 1
+    },
+    {
+      "input": "{\"password\": 123456}",
+      "expected": "{\"password\": \"[redacted]\"}",
+      "count": 1
+    },
+    {
+      "input": "{\"pwd\": 4815162342, \"user\": \"app\"}",
+      "expected": "{\"pwd\": \"[redacted]\", \"user\": \"app\"}",
+      "count": 1
+    },
+    {
+      "input": "{\"sessionid\": 88123456}",
+      "expected": "{\"sessionid\": \"[redacted]\"}",
+      "count": 1
+    },
+    {
+      "input": "def check(authorization: str, cookie: str) -> bool:",
+      "expected": "def check(authorization: str, cookie: str) -> bool:",
+      "count": 0
+    },
+    {
+      "input": "There are three kinds of authorization: role, attribute and policy.",
+      "expected": "There are three kinds of authorization: role, attribute and policy.",
+      "count": 0
+    },
+    {
+      "input": "Authorization: Bearer token required for all endpoints.",
+      "expected": "Authorization: Bearer token required for all endpoints.",
+      "count": 0
+    },
+    {
+      "input": "proxy-authorization: not used in this deployment",
+      "expected": "proxy-authorization: not used in this deployment",
+      "count": 0
+    },
+    {
+      "input": "?Key=abc123secret",
+      "expected": "?Key=abc123secret",
+      "count": 0
+    },
+    {
+      "input": "?toKen=abc123secret",
+      "expected": "?toKen=abc123secret",
+      "count": 0
+    },
+    {
+      "input": "{\"cooKie\": \"sid=abc123\"}",
+      "expected": "{\"cooKie\": \"sid=abc123\"}",
+      "count": 0
+    },
+    {
+      "input": "httpſ://h/x?X-Amz-Signature=abc123deadbeef",
+      "expected": "httpſ://h/x?X-Amz-Signature=abc123deadbeef",
+      "count": 0
+    },
+    {
+      "input": "Authorization: École abc123def456",
+      "expected": "Authorization: École abc123def456",
+      "count": 0
+    },
+    {
+      "input": "{\"file_path\": \"/home/app/.ssh/id_rsa\", \"content\": \"-----BEGIN OPENSSH PRIVATE KEY-----\\nb3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAAB\\nc3ludGhldGljc3ludGhldGljc3ludGhldGljc3ludGhldGlj\\n-----END OPENSSH PRIVATE KEY-----\\n\"}",
+      "expected": "{\"file_path\": \"/home/app/.ssh/id_rsa\", \"content\": \"[redacted:pem-private-key]\\n\"}",
+      "count": 1
+    },
+    {
+      "input": "{\"content\": \"-----BEGIN OPENSSH PRIVATE KEY-----\\r\\nb3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAAB\\r\\nc3ludGhldGljc3ludGhldGljc3ludGhldGljc3ludGhldGlj\\r\\n-----END OPENSSH PRIVATE KEY-----\\r\\n\"}",
+      "expected": "{\"content\": \"[redacted:pem-private-key]\\r\\n\"}",
+      "count": 1
+    },
+    {
+      "input": "{\"attributes\":{\"http.response.body\":\"{\\\"access_token\\\":\\\"ya29.AAAAAAAAAAAAAAAAAAAAAAAA\\\",\\\"expires_in\\\":3599}\"}}",
+      "expected": "{\"attributes\":{\"http.response.body\":\"{\\\"access_token\\\":\\\"[redacted]\\\",\\\"expires_in\\\":3599}\"}}",
+      "count": 1
+    },
+    {
+      "input": "response body: {\\\"client_secret\\\": \\\"abc123secretvalue\\\"}",
+      "expected": "response body: {\\\"client_secret\\\": \\\"[redacted]\\\"}",
+      "count": 1
+    },
+    {
+      "input": "POSTGRES_PASSWORD: s3cr3tpg",
+      "expected": "POSTGRES_PASSWORD: [redacted]",
+      "count": 1
+    },
+    {
+      "input": "services:\n  db:\n    image: postgres:16\n    environment:\n      POSTGRES_PASSWORD: s3cr3tpg\n      POSTGRES_USER: app\n",
+      "expected": "services:\n  db:\n    image: postgres:16\n    environment:\n      POSTGRES_PASSWORD: [redacted]\n      POSTGRES_USER: app\n",
+      "count": 1
+    },
+    {
+      "input": "      DB_PASSWORD: s3cr3tpg",
+      "expected": "      DB_PASSWORD: [redacted]",
+      "count": 1
+    },
+    {
+      "input": "AWS_SECRET_ACCESS_KEY: wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+      "expected": "AWS_SECRET_ACCESS_KEY: [redacted]",
+      "count": 1
+    },
+    {
+      "input": "diff --git a/.env b/.env\n--- a/.env\n+++ b/.env\n-DB_PASSWORD=old1234pw\n+DB_PASSWORD=hunter2new\n",
+      "expected": "diff --git a/.env b/.env\n--- a/.env\n+++ b/.env\n-DB_PASSWORD=[redacted]\n+DB_PASSWORD=[redacted]\n",
+      "count": 2
+    },
+    {
+      "input": "-AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+      "expected": "-AWS_SECRET_ACCESS_KEY=[redacted]",
+      "count": 1
+    },
+    {
+      "input": "[default]\naws_access_key_id = AKIAIOSFODNN7EXAMPLE\naws_secret_access_key = wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY\naws_session_token = FQoGZXIvYXdzEBYaDDEyMzQ1Njc4OTAx\n",
+      "expected": "[default]\naws_access_key_id = [redacted:aws-access-key-id]\naws_secret_access_key = [redacted]\naws_session_token = [redacted]\n",
+      "count": 3
+    },
+    {
+      "input": "DEPLOY_PRIVATE_KEY=aGVsbG8xMjM0NTY3ODkw",
+      "expected": "DEPLOY_PRIVATE_KEY=[redacted]",
+      "count": 1
+    },
+    {
+      "input": "SSH_PRIVATE_KEY=MIIEpAIBAAKCAQEA1234567890",
+      "expected": "SSH_PRIVATE_KEY=[redacted]",
+      "count": 1
+    },
+    {
+      "input": "MAX_TOKENS=4096",
+      "expected": "MAX_TOKENS=4096",
+      "count": 0
+    },
+    {
+      "input": "max_tokens: 4096",
+      "expected": "max_tokens: 4096",
+      "count": 0
+    },
+    {
+      "input": "GITHUB_TOKEN=ghp_cccccccccccccccccccccccccccccccccccc",
+      "expected": "GITHUB_TOKEN=[redacted]",
+      "count": 1
+    },
+    {
+      "input": "PASSWORD ?= hunter2",
+      "expected": "PASSWORD ?= hunter2",
+      "count": 0
+    },
+    {
+      "input": "PASSWORD += hunter2",
+      "expected": "PASSWORD += hunter2",
+      "count": 0
+    },
+    {
+      "input": "  authorization: \"Basic ZGVwbG95Omh1bnRlcjI=\"",
+      "expected": "  authorization: \"[redacted]\"",
+      "count": 1
+    },
+    {
+      "input": "  cookie: \"session=abc123def456\"",
+      "expected": "  cookie: \"[redacted]\"",
+      "count": 1
+    },
+    {
+      "input": "  x-auth-token: \"OPAQUESECRETVALUE456\"",
+      "expected": "  x-auth-token: \"[redacted]\"",
+      "count": 1
+    },
+    {
+      "input": "axios.get(url, { headers: { authorization: \"Bearer OPAQUESECRET678\" } })",
+      "expected": "axios.get(url, { headers: { authorization: \"[redacted]\" } })",
+      "count": 1
+    },
+    {
+      "input": "      Authorization: \"Bearer OPAQUESECRET901\"",
+      "expected": "      Authorization: \"[redacted]\"",
+      "count": 1
+    },
+    {
+      "input": "[authorization: Bearer abc123def456ghi789]",
+      "expected": "[authorization: [redacted]]",
+      "count": 1
+    },
+    {
+      "input": "def check(authorization: str):",
+      "expected": "def check(authorization: str):",
+      "count": 0
+    },
+    {
+      "input": "const opts = { headers: { authorization: authHeader } };",
+      "expected": "const opts = { headers: { authorization: authHeader } };",
+      "count": 0
+    },
+    {
+      "input": "struct Headers { authorization: String }",
+      "expected": "struct Headers { authorization: String }",
+      "count": 0
+    },
+    {
+      "input": "axios.get(url, { headers: { authorization: buildAuth() } })",
+      "expected": "axios.get(url, { headers: { authorization: buildAuth() } })",
+      "count": 0
+    },
+    {
+      "input": "type Headers = { authorization: string }",
+      "expected": "type Headers = { authorization: string }",
+      "count": 0
+    },
+    {
+      "input": "Authorization: required",
+      "expected": "Authorization: required",
+      "count": 0
+    },
+    {
+      "input": "x-api-key: TODO",
+      "expected": "x-api-key: TODO",
+      "count": 0
+    },
+    {
+      "input": "  authorization: {}",
+      "expected": "  authorization: {}",
+      "count": 0
+    },
+    {
+      "input": "  authorization: []",
+      "expected": "  authorization: []",
+      "count": 0
+    },
+    {
+      "input": "Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.e30.abc",
+      "expected": "Authorization: [redacted]",
+      "count": 1
+    },
+    {
+      "input": "x-api-key: sk_live_ex4mple0key0for0tests00",
+      "expected": "x-api-key: [redacted]",
+      "count": 1
+    },
+    {
+      "input": "{\"content\": \"POSTGRES_PASSWORD: 12345\\nPOSTGRES_USER: app\\n\"}",
+      "expected": "{\"content\": \"POSTGRES_PASSWORD: [redacted]\\nPOSTGRES_USER: app\\n\"}",
+      "count": 1
+    },
+    {
+      "input": "{\"command\": \"curl -u root:12345 https://h.example/\"}",
+      "expected": "{\"command\": \"curl -u root:[redacted] https://h.example/\"}",
+      "count": 1
+    },
+    {
+      "input": "{\"command\": \"docker run -u 1000:1000 alpine id\"}",
+      "expected": "{\"command\": \"docker run -u 1000:[redacted] alpine id\"}",
+      "count": 1
+    },
+    {
+      "input": "{\"body\":\"{\\\"password\\\": 12345}\"}",
+      "expected": "{\"body\":\"{\\\"password\\\": \\\"[redacted]\\\"}\"}",
+      "count": 1
+    },
+    {
+      "input": "{\"stdout\": \"secret: 42\"}",
+      "expected": "{\"stdout\": \"secret: [redacted]\"}",
+      "count": 1
+    },
+    {
+      "input": "{\"tool_result\": \"sessionid: 12345678\"}",
+      "expected": "{\"tool_result\": \"sessionid: [redacted]\"}",
+      "count": 1
+    },
+    {
+      "input": "{'password': 123}",
+      "expected": "{'password': '[redacted]'}",
+      "count": 1
+    },
+    {
+      "input": "password = DEFAULT_ADMIN_PASSWORD",
+      "expected": "password = DEFAULT_ADMIN_PASSWORD",
+      "count": 0
+    },
+    {
+      "input": "const password = getDatabasePassword;",
+      "expected": "const password = getDatabasePassword;",
+      "count": 0
+    },
+    {
+      "input": "api_key = SETTINGS_DEFAULT_API_KEY",
+      "expected": "api_key = SETTINGS_DEFAULT_API_KEY",
+      "count": 0
+    },
+    {
+      "input": "client_secret = CLIENT_SECRET_ENV_NAME",
+      "expected": "client_secret = CLIENT_SECRET_ENV_NAME",
+      "count": 0
+    },
+    {
+      "input": "DB_PASSWORD=DefaultAdminPassword",
+      "expected": "DB_PASSWORD=[redacted]",
+      "count": 1
+    },
+    {
+      "input": "password: DEFAULT_ADMIN_PASSWORD",
+      "expected": "password: [redacted]",
+      "count": 1
+    },
+    {
+      "input": "password = Tr0ub4dor_and_3",
+      "expected": "password = [redacted]",
+      "count": 1
+    },
+    {
+      "input": "level=info msg=connect password= host=db.internal port=5432",
+      "expected": "level=info msg=connect password= host=db.internal port=5432",
+      "count": 0
+    },
+    {
+      "input": "mysql --password= --host=db -e 'show tables'",
+      "expected": "mysql --password= --host=db -e 'show tables'",
+      "count": 0
+    },
+    {
+      "input": "--password=hunter2hunter2 --host=db",
+      "expected": "--password=[redacted] --host=db",
+      "count": 1
+    },
+    {
+      "input": "password = hunter2hunter2",
+      "expected": "password = [redacted]",
+      "count": 1
+    },
+    {
+      "input": "SECRET_KEY=abc123def456ghi789",
+      "expected": "SECRET_KEY=[redacted]",
+      "count": 1
+    },
+    {
+      "input": "SECRET_KEY = 'django-insecure-abc123def456ghi789'",
+      "expected": "SECRET_KEY = '[redacted]'",
+      "count": 1
+    },
+    {
+      "input": "ACCESS_KEY=AKIAIOSFODNN7EXAMPL",
+      "expected": "ACCESS_KEY=[redacted]",
+      "count": 1
+    },
+    {
+      "input": "PRIVATE_KEY=MIIEpAIBAAKCAQEA1234567890",
+      "expected": "PRIVATE_KEY=[redacted]",
+      "count": 1
+    },
+    {
+      "input": "    secret_key = \"wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY\"",
+      "expected": "    secret_key = \"[redacted]\"",
+      "count": 1
+    },
+    {
+      "input": "CACHE_KEY=users:42",
+      "expected": "CACHE_KEY=users:42",
+      "count": 0
+    },
+    {
+      "input": "SSH_KEY_PATH=~/.ssh/id_ed25519",
+      "expected": "SSH_KEY_PATH=~/.ssh/id_ed25519",
+      "count": 0
+    },
+    {
+      "input": "PUBLIC_KEY=ssh-ed25519 AAAAB3NzaC1lZDI1NTE5",
+      "expected": "PUBLIC_KEY=ssh-ed25519 AAAAB3NzaC1lZDI1NTE5",
+      "count": 0
+    },
+    {
+      "input": "See https://h.example/v1?api_key=abc123secret for details.",
+      "expected": "See https://h.example/v1?api_key=[redacted] for details.",
+      "count": 1
+    },
+    {
+      "input": "トークン https://h.example/v1?api_key=abc123secret　を確認",
+      "expected": "トークン https://h.example/v1?api_key=[redacted]　を確認",
+      "count": 1
+    },
+    {
+      "input": "mysql --password=MyVerySecretPassword -h db",
+      "expected": "mysql --password=[redacted] -h db",
+      "count": 1
+    },
+    {
+      "input": "docker login -u ci --password=DockerHubAccessToken",
+      "expected": "docker login -u ci --password=[redacted]",
+      "count": 1
+    },
+    {
+      "input": "password=CorrectHorseBatteryStaple",
+      "expected": "password=[redacted]",
+      "count": 1
+    },
+    {
+      "input": "api_key=MyVerySecretApiKeyValue",
+      "expected": "api_key=[redacted]",
+      "count": 1
+    },
+    {
+      "input": "export password=MyVerySecretPassword",
+      "expected": "export password=[redacted]",
+      "count": 1
+    },
+    {
+      "input": "def sign(private_key: EllipticCurvePrivateKey, data: bytes) -> bytes:",
+      "expected": "def sign(private_key: EllipticCurvePrivateKey, data: bytes) -> bytes:",
+      "count": 0
+    },
+    {
+      "input": "secret_key: SecretKeyProviderProtocol",
+      "expected": "secret_key: SecretKeyProviderProtocol",
+      "count": 0
+    },
+    {
+      "input": "private_key: Ed25519PrivateKey",
+      "expected": "private_key: Ed25519PrivateKey",
+      "count": 0
+    },
+    {
+      "input": "class Signer:\n    private_key: EllipticCurvePrivateKey\n    algorithm: str\n",
+      "expected": "class Signer:\n    private_key: EllipticCurvePrivateKey\n    algorithm: str\n",
+      "count": 0
+    },
+    {
+      "input": "SECRET_KEY=django-insecure-abc123def456ghi789",
+      "expected": "SECRET_KEY=[redacted]",
+      "count": 1
+    },
+    {
+      "input": "PRIVATE_KEY = \"MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcw\"",
+      "expected": "PRIVATE_KEY = \"[redacted]\"",
+      "count": 1
+    },
+    {
+      "input": "x-api-key: application/json",
+      "expected": "x-api-key: application/json",
+      "count": 0
+    },
+    {
+      "input": "x-api-key: not-set",
+      "expected": "x-api-key: not-set",
+      "count": 0
+    },
+    {
+      "input": "authorization: role-based",
+      "expected": "authorization: role-based",
+      "count": 0
+    },
+    {
+      "input": "x-goog-api-key: user-provided",
+      "expected": "x-goog-api-key: user-provided",
+      "count": 0
+    },
+    {
+      "input": "x-api-key: abc123def456",
+      "expected": "x-api-key: [redacted]",
+      "count": 1
+    },
+    {
+      "input": "Authorization: Basic dXNlcjpwYXNz",
+      "expected": "Authorization: [redacted]",
+      "count": 1
+    },
+    {
+      "input": "{\"stdout\": \"Enter password: \", \"exit_code\": 1}",
+      "expected": "{\"stdout\": \"Enter password: \", \"exit_code\": 1}",
+      "count": 0
+    },
+    {
+      "input": "{\"content\": \"DB_PASSWORD=\", \"path\": \".env\"}",
+      "expected": "{\"content\": \"DB_PASSWORD=\", \"path\": \".env\"}",
+      "count": 0
+    },
+    {
+      "input": "{\"lines\": [\"password: \", \"host: db\"]}",
+      "expected": "{\"lines\": [\"password: \", \"host: db\"]}",
+      "count": 0
+    },
+    {
+      "input": "{\"args\": {\"command\": \"password: \"}, \"n\": 1}",
+      "expected": "{\"args\": {\"command\": \"password: \"}, \"n\": 1}",
+      "count": 0
+    },
+    {
+      "input": "{\"stdout\": \"Enter password: hunter2hunter2\", \"exit_code\": 0}",
+      "expected": "{\"stdout\": \"Enter password: [redacted]\", \"exit_code\": 0}",
+      "count": 1
+    },
+    {
+      "input": "{\"a\": \"password: \\\"hunter2hunter2\\\"\", \"b\": \"x\"}",
+      "expected": "{\"a\": \"password: \\\"[redacted]\\\"\", \"b\": \"x\"}",
+      "count": 1
+    },
+    {
+      "input": "{\"cmd\": \"mysql --password='hunter2hunter2'\"}",
+      "expected": "{\"cmd\": \"mysql --password='[redacted]'\"}",
+      "count": 1
+    },
+    {
+      "input": "    env:\n      - name: DB_PASSWORD\n        value: s3cr3tpg\n      - name: APP_ENV\n        value: production\n",
+      "expected": "    env:\n      - name: DB_PASSWORD\n        value: s3cr3tpg\n      - name: APP_ENV\n        value: production\n",
+      "count": 0
+    },
+    {
+      "input": "{\"content\": \"{\\\"stdout\\\": \\\"Enter password: \\\", \\\"exit_code\\\": 1}\"}",
+      "expected": "{\"content\": \"{\\\"stdout\\\": \\\"Enter password: \\\", \\\"exit_code\\\": 1}\"}",
+      "count": 0
+    },
+    {
+      "input": "{\"content\": \"echo -n \\\"Enter password: \\\"\\nread -s PASSWORD\\necho \\\"You entered $PASSWORD\\\"\", \"path\": \"a.sh\"}",
+      "expected": "{\"content\": \"echo -n \\\"Enter password: \\\"\\nread -s PASSWORD\\necho \\\"You entered $PASSWORD\\\"\", \"path\": \"a.sh\"}",
+      "count": 0
+    },
+    {
+      "input": "echo -n \"Enter password: \"\nread -s PASSWORD\necho \"You entered $PASSWORD\"",
+      "expected": "echo -n \"Enter password: \"\nread -s PASSWORD\necho \"You entered $PASSWORD\"",
+      "count": 0
+    },
+    {
+      "input": "{\"content\": \"{\\\"stdout\\\": \\\"Enter password: hunter2hunter2\\\"}\"}",
+      "expected": "{\"content\": \"{\\\"stdout\\\": \\\"Enter password: [redacted]\\\"}\"}",
+      "count": 1
+    },
+    {
+      "input": "# don't commit this: password='hunter2hunter2'",
+      "expected": "# don't commit this: password='[redacted]'",
+      "count": 1
+    },
+    {
+      "input": "app.py:12:# don't use in prod: api_key='abc123def456'",
+      "expected": "app.py:12:# don't use in prod: api_key='[redacted]'",
+      "count": 1
+    },
+    {
+      "input": "He said \"hi, password=\"hunter2hunter2\"",
+      "expected": "He said \"hi, password=\"[redacted]\"",
+      "count": 1
+    },
+    {
+      "input": "-- user's note: password='hunter2hunter2'",
+      "expected": "-- user's note: password='[redacted]'",
+      "count": 1
+    },
+    {
+      "input": "{\"cmd\": \"mysql --password='hunter2hunter2' -h db\"}",
+      "expected": "{\"cmd\": \"mysql --password='[redacted]' -h db\"}",
+      "count": 1
+    },
+    {
+      "input": "spring.datasource.password=s3cr3tpassword",
+      "expected": "spring.datasource.password=[redacted]",
+      "count": 1
+    },
+    {
+      "input": "helm install app --set postgres.password=hunter2hunter2",
+      "expected": "helm install app --set postgres.password=[redacted]",
+      "count": 1
+    },
+    {
+      "input": "-Dspring.datasource.password=hunter2hunter2",
+      "expected": "-Dspring.datasource.password=[redacted]",
+      "count": 1
+    },
+    {
+      "input": "mail.smtp.password=s3cr3tmail1",
+      "expected": "mail.smtp.password=[redacted]",
+      "count": 1
+    },
+    {
+      "input": "db.password=hunter2hunter2",
+      "expected": "db.password=[redacted]",
+      "count": 1
+    },
+    {
+      "input": "self.password = get_pw()",
+      "expected": "self.password = get_pw()",
+      "count": 0
+    },
+    {
+      "input": "config.api_key = settings.API_KEY",
+      "expected": "config.api_key = settings.API_KEY",
+      "count": 0
+    },
+    {
+      "input": "self.password = other_password",
+      "expected": "self.password = other_password",
+      "count": 0
+    },
+    {
+      "input": "spring.datasource.password: hunter2hunter2",
+      "expected": "spring.datasource.password: hunter2hunter2",
+      "count": 0
+    },
+    {
+      "input": "{\"content\": \"{\\\"authorization\\\": \\\"Bearer abc123def456ghi\\\"}\", \"path\": \"req.json\"}",
+      "expected": "{\"content\": \"{\\\"authorization\\\": \\\"[redacted]\\\"}\", \"path\": \"req.json\"}",
+      "count": 1
+    },
+    {
+      "input": "{\"content\": \"{\\n  \\\"headers\\\": {\\n    \\\"authorization\\\": \\\"Bearer abc123def456ghi\\\"\\n  }\\n}\"}",
+      "expected": "{\"content\": \"{\\n  \\\"headers\\\": {\\n    \\\"authorization\\\": \\\"[redacted]\\\"\\n  }\\n}\"}",
+      "count": 1
+    },
+    {
+      "input": "{\"stdout\": \"{\\\"authorization\\\": \\\"Bearer abc123def456ghi\\\"}\"}",
+      "expected": "{\"stdout\": \"{\\\"authorization\\\": \\\"[redacted]\\\"}\"}",
+      "count": 1
+    },
+    {
+      "input": "{\"content\": \"{\\\"cookie\\\": \\\"sid=abc123def456ghi\\\"}\"}",
+      "expected": "{\"content\": \"{\\\"cookie\\\": \\\"[redacted]\\\"}\"}",
+      "count": 1
+    },
+    {
+      "input": "{\"content\": \"{\\\"authorization\\\": \\\"\\\", \\\"host\\\": \\\"a\\\"}\"}",
+      "expected": "{\"content\": \"{\\\"authorization\\\": \\\"\\\", \\\"host\\\": \\\"a\\\"}\"}",
+      "count": 0
+    },
+    {
+      "input": "{\"authorization\": \"Bearer abc123def456ghi\"}",
+      "expected": "{\"authorization\": \"[redacted]\"}",
+      "count": 1
+    },
+    {
+      "input": "{\"content\": \"{\\\"x-api-key\\\": \\\"abc123def456ghi\\\"}\"}",
+      "expected": "{\"content\": \"{\\\"x-api-key\\\": \\\"[redacted]\\\"}\"}",
+      "count": 1
+    },
+    {
+      "input": "gateway.api-key=user-provided",
+      "expected": "gateway.api-key=user-provided",
+      "count": 0
+    },
+    {
+      "input": "nginx.x-api-key=application/json",
+      "expected": "nginx.x-api-key=application/json",
+      "count": 0
+    },
+    {
+      "input": "svc.apikey=abc123def456",
+      "expected": "svc.apikey=[redacted]",
+      "count": 1
+    },
+    {
+      "input": "svc.apikey=not-set",
+      "expected": "svc.apikey=[redacted]",
+      "count": 1
+    },
+    {
+      "input": "password=\"abc\\\ndef\" && echo ok",
+      "expected": "password=\"abc\\\ndef\" && echo ok",
+      "count": 0
+    },
+    {
+      "input": "password=\"hunter2hunter2\\\nmore\" && echo ok",
+      "expected": "password=\"hunter2hunter2\\\nmore\" && echo ok",
+      "count": 0
+    },
+    {
+      "input": "password=\"ÖÄÜßÖÄÜßÖÄÜß\"",
+      "expected": "password=\"ÖÄÜßÖÄÜßÖÄÜß\"",
+      "count": 0
+    },
+    {
+      "input": "{\"lines\": [\"password: \", 1, \"host: db\"]}",
+      "expected": "{\"lines\": [\"password: \"[redacted]\"host: db\"]}",
+      "count": 1
+    },
+    {
+      "input": "{\"file_path\": \"/srv/app/.env\", \"content\": \"NODE_ENV=production\\napi_key=abc123def456ghi\\n\"}",
+      "expected": "{\"file_path\": \"/srv/app/.env\", \"content\": \"NODE_ENV=production\\napi_key=[redacted]\\n\"}",
+      "count": 1
+    },
+    {
+      "input": "{\"result\": \"     1\\tapi_key=abc123def456ghi\\n\"}",
+      "expected": "{\"result\": \"     1\\tapi_key=[redacted]\\n\"}",
+      "count": 1
+    },
+    {
+      "input": "{\"content\": \"# comment\\r\\napi_key=abc123def456ghi\\r\\n\"}",
+      "expected": "{\"content\": \"# comment\\r\\napi_key=[redacted]\\r\\n\"}",
+      "count": 1
+    },
+    {
+      "input": "{\"content\": \"a\\nAuthorization: Bearer abc123def456ghi\\nHost: h\\n\"}",
+      "expected": "{\"content\": \"a\\nAuthorization: [redacted]\\nHost: h\\n\"}",
+      "count": 1
+    },
+    {
+      "input": "{\"content\": \"a\\nCookie: sid=abc123def456ghi\\n\"}",
+      "expected": "{\"content\": \"a\\nCookie: [redacted]\\n\"}",
+      "count": 1
+    },
+    {
+      "input": "{\"content\": \"a\\nX-Api-Key: abc123def456ghi\\n\"}",
+      "expected": "{\"content\": \"a\\nX-Api-Key: [redacted]\\n\"}",
+      "count": 1
+    },
+    {
+      "input": "{\"content\": \"api_key=abc123def456ghi\\nNODE_ENV=production\\n\"}",
+      "expected": "{\"content\": \"api_key=[redacted]\\nNODE_ENV=production\\n\"}",
+      "count": 1
+    },
+    {
+      "input": "{\"content\": \"line one\\n> authorization: Bearer abc123def456ghi\"}",
+      "expected": "{\"content\": \"line one\\n> authorization: [redacted]\"}",
+      "count": 1
+    },
+    {
+      "input": "\"authorization\": [redacted]",
+      "expected": "\"authorization\": [redacted]",
+      "count": 0
+    },
+    {
+      "input": "{\"headers\": [{\"name\": \"Authorization\", \"value\": \"Bearer abc123def456ghi\"}, {\"name\": \"Host\", \"value\": \"api.example.com\"}]}",
+      "expected": "{\"headers\": [{\"name\": \"Authorization\", \"value\": \"Bearer abc123def456ghi\"}, {\"name\": \"Host\", \"value\": \"api.example.com\"}]}",
+      "count": 0
+    },
+    {
+      "input": "machine api.example.com login deploy password hunter2hunter2",
+      "expected": "machine api.example.com login deploy password hunter2hunter2",
+      "count": 0
+    },
+    {
+      "input": "{\"content\": \"a\\napi-key: not-set\\n\"}",
+      "expected": "{\"content\": \"a\\napi-key: not-set\\n\"}",
+      "count": 0
+    },
+    {
+      "input": "a\napi-key: not-set\n",
+      "expected": "a\napi-key: not-set\n",
+      "count": 0
+    },
+    {
+      "input": "{\"content\": \"a\\nx-api-key: application/json\\n\"}",
+      "expected": "{\"content\": \"a\\nx-api-key: application/json\\n\"}",
+      "count": 0
+    },
+    {
+      "input": "{\"result\": \"     1\\tx-api-key: N/A\\n\"}",
+      "expected": "{\"result\": \"     1\\tx-api-key: N/A\\n\"}",
+      "count": 0
+    },
+    {
+      "input": "{\"content\": \"a\\napi-key: abc123def456ghi\\n\"}",
+      "expected": "{\"content\": \"a\\napi-key: [redacted]\\n\"}",
+      "count": 1
+    },
+    {
+      "input": "{\"file_path\": \"sa.json\", \"content\": \"{\\\"private_key\\\": \\\"-----BEGIN PRIVATE KEY-----\\\\nMIIEvQIBADANBg\\\\n-----END PRIVATE KEY-----\\\\n\\\"}\"}",
+      "expected": "{\"file_path\": \"sa.json\", \"content\": \"{\\\"private_key\\\": \\\"[redacted:pem-private-key]\\\\n\\\"}\"}",
+      "count": 1
+    },
+    {
+      "input": "{\"result\": \"     1\\t{\\\"private_key\\\": \\\"-----BEGIN PRIVATE KEY-----\\\\nMIIEvQIBADANBg\\\\n-----END PRIVATE KEY-----\\\\n\\\"}\\n\"}",
+      "expected": "{\"result\": \"     1\\t{\\\"private_key\\\": \\\"[redacted:pem-private-key]\\\\n\\\"}\\n\"}",
+      "count": 1
+    },
+    {
+      "input": "{\"private_key\": \"-----BEGIN PRIVATE KEY-----\\\\nMIIEvQIBADANBg\\\\n-----END PRIVATE KEY-----\\\\n\"}",
+      "expected": "{\"private_key\": \"[redacted:pem-private-key]\\\\n\"}",
+      "count": 1
+    },
+    {
+      "input": "https://h/v1?Key=abc123def456ghi",
+      "expected": "https://h/v1?Key=abc123def456ghi",
+      "count": 0
+    },
+    {
+      "input": "{\"content\": \"a\\n-----BEGIN PRIVATE KEY-----\\nMIIEvQIBADANBg\\n-----END PRIVATE KEY-----\\n\"}",
+      "expected": "{\"content\": \"a\\n[redacted:pem-private-key]\\n\"}",
+      "count": 1
+    },
+    {
+      "input": "{\"result\": \"     2\\t-----BEGIN PRIVATE KEY-----\\nMIIEvQIBADANBg\\n-----END PRIVATE KEY-----\\n\"}",
+      "expected": "{\"result\": \"     2\\t[redacted:pem-private-key]\\n\"}",
+      "count": 1
+    },
+    {
+      "input": "a\n-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBg\n-----END PRIVATE KEY-----\n",
+      "expected": "a\n[redacted:pem-private-key]\n",
+      "count": 1
+    },
+    {
+      "input": "{\"content\": \"a\\nghp_A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8\\n\"}",
+      "expected": "{\"content\": \"a\\n[redacted:github-token]\\n\"}",
+      "count": 1
+    },
+    {
+      "input": "{\"result\": \"     2\\tghp_A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8\\n\"}",
+      "expected": "{\"result\": \"     2\\t[redacted:github-token]\\n\"}",
+      "count": 1
+    },
+    {
+      "input": "a\nghp_A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8\n",
+      "expected": "a\n[redacted:github-token]\n",
+      "count": 1
+    },
+    {
+      "input": "{\"content\": \"a\\nAKIAIOSFODNN7EXAMPLE\\n\"}",
+      "expected": "{\"content\": \"a\\n[redacted:aws-access-key-id]\\n\"}",
+      "count": 1
+    },
+    {
+      "input": "{\"result\": \"     2\\tAKIAIOSFODNN7EXAMPLE\\n\"}",
+      "expected": "{\"result\": \"     2\\t[redacted:aws-access-key-id]\\n\"}",
+      "count": 1
+    },
+    {
+      "input": "a\nAKIAIOSFODNN7EXAMPLE\n",
+      "expected": "a\n[redacted:aws-access-key-id]\n",
+      "count": 1
+    },
+    {
+      "input": "{\"content\": \"a\\nsk-proj-A1b2C3d4E5f6G7h8I9j0K1l2\\n\"}",
+      "expected": "{\"content\": \"a\\n[redacted:openai-key]\\n\"}",
+      "count": 1
+    },
+    {
+      "input": "{\"result\": \"     2\\tsk-proj-A1b2C3d4E5f6G7h8I9j0K1l2\\n\"}",
+      "expected": "{\"result\": \"     2\\t[redacted:openai-key]\\n\"}",
+      "count": 1
+    },
+    {
+      "input": "a\nsk-proj-A1b2C3d4E5f6G7h8I9j0K1l2\n",
+      "expected": "a\n[redacted:openai-key]\n",
+      "count": 1
+    },
+    {
+      "input": "{\"content\": \"a\\nAIzaSyA1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q\\n\"}",
+      "expected": "{\"content\": \"a\\n[redacted:google-api-key]\\n\"}",
+      "count": 1
+    },
+    {
+      "input": "{\"result\": \"     2\\tAIzaSyA1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q\\n\"}",
+      "expected": "{\"result\": \"     2\\t[redacted:google-api-key]\\n\"}",
+      "count": 1
+    },
+    {
+      "input": "a\nAIzaSyA1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q\n",
+      "expected": "a\n[redacted:google-api-key]\n",
+      "count": 1
+    },
+    {
+      "input": "{\"content\": \"a\\neyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dBjftJeZ4CVPmB92K27uhbUJU1p1r_wW1gFWFOEjXk\\n\"}",
+      "expected": "{\"content\": \"a\\n[redacted:jwt]\\n\"}",
+      "count": 1
+    },
+    {
+      "input": "{\"result\": \"     2\\teyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dBjftJeZ4CVPmB92K27uhbUJU1p1r_wW1gFWFOEjXk\\n\"}",
+      "expected": "{\"result\": \"     2\\t[redacted:jwt]\\n\"}",
+      "count": 1
+    },
+    {
+      "input": "a\neyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dBjftJeZ4CVPmB92K27uhbUJU1p1r_wW1gFWFOEjXk\n",
+      "expected": "a\n[redacted:jwt]\n",
+      "count": 1
+    },
+    {
+      "input": "{\"content\": \"a\\nglpat-A1b2C3d4E5f6G7h8I9j0\\n\"}",
+      "expected": "{\"content\": \"a\\n[redacted:gitlab-token]\\n\"}",
+      "count": 1
+    },
+    {
+      "input": "{\"result\": \"     2\\tglpat-A1b2C3d4E5f6G7h8I9j0\\n\"}",
+      "expected": "{\"result\": \"     2\\t[redacted:gitlab-token]\\n\"}",
+      "count": 1
+    },
+    {
+      "input": "a\nglpat-A1b2C3d4E5f6G7h8I9j0\n",
+      "expected": "a\n[redacted:gitlab-token]\n",
+      "count": 1
+    },
+    {
+      "input": "{\"content\": \"a\\nnpm_A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8\\n\"}",
+      "expected": "{\"content\": \"a\\n[redacted:npm-token]\\n\"}",
+      "count": 1
+    },
+    {
+      "input": "{\"result\": \"     2\\tnpm_A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8\\n\"}",
+      "expected": "{\"result\": \"     2\\t[redacted:npm-token]\\n\"}",
+      "count": 1
+    },
+    {
+      "input": "a\nnpm_A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8\n",
+      "expected": "a\n[redacted:npm-token]\n",
+      "count": 1
+    },
+    {
+      "input": "{\"content\": \"a\\nxoxb-1234567890-ABCdefGHIjklMNO\\n\"}",
+      "expected": "{\"content\": \"a\\n[redacted:slack-token]\\n\"}",
+      "count": 1
+    },
+    {
+      "input": "{\"result\": \"     2\\txoxb-1234567890-ABCdefGHIjklMNO\\n\"}",
+      "expected": "{\"result\": \"     2\\t[redacted:slack-token]\\n\"}",
+      "count": 1
+    },
+    {
+      "input": "a\nxoxb-1234567890-ABCdefGHIjklMNO\n",
+      "expected": "a\n[redacted:slack-token]\n",
+      "count": 1
+    },
+    {
+      "input": "{\"result\": \"     1\\t-----BEGIN PRIVATE KEY-----\\n     2\\tMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcw\\n     3\\t-----END PRIVATE KEY-----\\n\"}",
+      "expected": "{\"result\": \"     1\\t[redacted:pem-private-key]\\n\"}",
+      "count": 1
+    },
+    {
+      "input": "{\"file_path\": \"id_rsa\", \"content\": \"# generated 2026-09-05\\n-----BEGIN PRIVATE KEY-----\\nMIIEvQIBADANBg\\n-----END PRIVATE KEY-----\\n\"}",
+      "expected": "{\"file_path\": \"id_rsa\", \"content\": \"# generated 2026-09-05\\n[redacted:pem-private-key]\\n\"}",
+      "count": 1
+    },
+    {
+      "input": "{\"file_path\": \"keys.pem\", \"content\": \"-----BEGIN PRIVATE KEY-----\\nAAAAvQIBADANBg\\n-----END PRIVATE KEY-----\\n-----BEGIN PRIVATE KEY-----\\nBBBBvQIBADANBg\\n-----END PRIVATE KEY-----\\n\"}",
+      "expected": "{\"file_path\": \"keys.pem\", \"content\": \"[redacted:pem-private-key]\\n[redacted:pem-private-key]\\n\"}",
+      "count": 2
+    },
+    {
+      "input": "{\"content\": \"a\\thunterghp_A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8\"}",
+      "expected": "{\"content\": \"a\\thunterghp_A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8\"}",
+      "count": 0
+    },
+    {
+      "input": "{\"command\": \"cd /srv\\n-u admin:hunter2pw https://h/x\"}",
+      "expected": "{\"command\": \"cd /srv\\n-u admin:[redacted] https://h/x\"}",
+      "count": 1
+    },
+    {
+      "input": "cd /srv\n-u admin:hunter2pw https://h/x",
+      "expected": "cd /srv\n-u admin:[redacted] https://h/x",
+      "count": 1
+    },
+    {
+      "input": "{\"content\": \"a\\npostgresql://app:s3cr3tpg@db.internal:5432/appdb\\n\"}",
+      "expected": "{\"content\": \"a\\npostgresql://app:[redacted]@db.internal:5432/appdb\\n\"}",
+      "count": 1
+    },
+    {
+      "input": "{\"result\": \"     2\\tpostgresql://app:s3cr3tpg@db.internal:5432/appdb\\n\"}",
+      "expected": "{\"result\": \"     2\\tpostgresql://app:[redacted]@db.internal:5432/appdb\\n\"}",
+      "count": 1
+    }
+  ]
+}

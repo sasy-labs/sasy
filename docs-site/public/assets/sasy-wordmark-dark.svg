@@ -1,0 +1,47 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 220 85">
+  <title>SASY — Seamless Agent Security</title>
+  <defs>
+    <linearGradient id="triangle" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#8b5cf6" />
+      <stop offset="100%" stop-color="#6366f1" />
+    </linearGradient>
+  </defs>
+
+  <text
+    x="5"
+    y="55"
+    fill="#ffffff"
+    font-family="Futura, Futura-Bold, Century Gothic, Arial, sans-serif"
+    font-size="68"
+    font-weight="bold"
+  >S</text>
+  <g transform="translate(55, 5)">
+    <path d="M25 0 50 50H0Z" fill="url(#triangle)" />
+    <circle cx="25" cy="28" r="5" fill="#ffffff" />
+    <path d="M22 28h6v12h-6z" fill="#ffffff" />
+  </g>
+  <text
+    x="108"
+    y="55"
+    fill="#ffffff"
+    font-family="Futura, Futura-Bold, Century Gothic, Arial, sans-serif"
+    font-size="68"
+    font-weight="bold"
+  >S</text>
+  <text
+    x="158"
+    y="55"
+    fill="#ffffff"
+    font-family="Futura, Futura-Bold, Century Gothic, Arial, sans-serif"
+    font-size="68"
+    font-weight="bold"
+  >Y</text>
+  <text
+    x="5"
+    y="75"
+    fill="#e2e8f0"
+    font-family="Futura, Century Gothic, Arial, sans-serif"
+    font-size="10.85"
+    letter-spacing="2.4"
+  >SEAMLESS AGENT SECURITY</text>
+</svg>

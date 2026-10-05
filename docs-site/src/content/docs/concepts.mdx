@@ -1,0 +1,95 @@
+---
+title: Concepts
+description: The terms used throughout this documentation, defined once.
+---
+
+Every page here uses the words below in exactly this sense.
+
+## Messages and the graph
+
+**Message**, **record**, **dependency**, **ancestry**, **evidence of a successful
+tool result** and **message version** are defined, with an example, on
+[the dependency graph](/dependency-graph/). In one line: a message is a node, a
+dependency says one message was computed from another, and a message's ancestry
+is everything it was computed from. In a policy, `CurrentDepends(id)` is the
+ancestry of the action being checked.
+
+## Decisions
+
+**Action.** Something the agent is about to do: call a tool, send an HTTP
+request.
+
+**Check.** Before an action runs, the application asks the engine "may I do
+this?", naming the action, its arguments and the IDs of the messages the action
+was computed from (its **input IDs**).
+
+**Policy.** A file of Datalog rules that answers a check. **Datalog** is a small
+logic language: a rule says "this fact holds if these other facts hold". Your
+rules derive `IsAuthorized` (this action may run) and `Unauthorized` (it may
+not). Nothing is allowed unless a rule allows it, and `Unauthorized` always
+wins. The engine compiles policies with **Soufflé**, a Datalog compiler. The
+Docker image includes it; a natively built engine needs it installed. See
+[policy language](/policy-language/).
+
+**Reference monitor.** The part of the engine that answers checks. Everything
+that is checked goes through it. The word "engine" means the whole `sasy serve`
+process, which also records messages and stores the graph.
+
+**Decision.** Allow, deny (with a reason and an optional suggestion), or ask
+(the action needs a human approval, where your application offers one).
+
+**Dispatch site.** The line of your code that actually runs the tool. A check
+protects an action only if it sits immediately before that line.
+
+**Transform.** A policy-directed rewrite of an outgoing request, used to inject
+a credential the agent never sees. In the Python SDK, transforms are applied to
+HTTP requests, which reach the engine only when the [HTTP hooks](#integrating)
+are on (`sasy.instrument(http=True)`). If a decision requires a transform the
+adapter cannot apply, the action does not run.
+
+## Scope and identity
+
+**Session.** One conversation: its own graph and one bound policy. A new
+conversation is a new session.
+
+**Tenant.** One isolated customer or environment. Sessions and the default
+policy for new sessions belong to a tenant.
+
+**Principal.** Who the engine authenticated, derived from the API key, the JWT
+subject or the mutual-TLS certificate. It cannot be forged over the wire, so
+accountability rules use it.
+
+**Entity.** A free-form label the application attaches to a request, for
+example an end-user name relayed by a gateway. It is not authenticated: any
+caller can send any string, so do not authorize on `Entity` alone.
+
+**Agent.** A conversation role label on a recorded message, such as
+`"reviewer"`. Like `Entity`, it is supplied by the application.
+
+**Role.** A name bound to a principal in the engine's role configuration, read
+in a policy with `HasRole("...")`. See [authentication](/authentication/).
+
+## Integrating
+
+**Adapter.** Code that records messages and places checks for one framework.
+Written once per framework and reused by every agent built on it. The SDK
+calls enabling one "instrumenting" the framework, as in `sasy.instrument()`.
+
+**HTTP hooks.** Patches for the `httpx` and `requests` Python libraries that
+send outbound HTTP requests through the same check, and let the reference
+monitor inject credentials (add an API key the engine holds to a request). They
+are separate from the framework adapters and off by default;
+`sasy.instrument(http=True)` enables them.
+
+**Unattributed external input.** A message whose origin the adapter cannot
+verify. Adapters expose markers for supported message handoffs so a policy can
+treat them conservatively. Copying just the text into a new user message can
+lose its origin; the framework guides explain how to preserve message identity.
+
+**Taint.** Informal name for a policy pattern: derive a fact when the ancestry
+contains something undesirable, then deny actions while that fact holds.
+Ancestry does not cross session boundaries, and missing ancestry does not
+establish that an input is safe. Preserve message objects when forwarding
+results and handle unknown origins using your adapter’s policy-visible marker;
+see [LangChain](/integrations/langchain/#inputs-of-unknown-origin) and
+[ADK](/integrations/google-adk/#values-from-another-sasy-session).

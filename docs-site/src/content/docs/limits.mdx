@@ -1,0 +1,68 @@
+---
+title: Security model and limits
+---
+
+SASY enforces the bound policy before an action runs. Its guarantee rests on
+three conditions: the policy expresses the intended rule, the integration
+faithfully records policy-relevant inputs and dependencies, and it checks each
+protected action before execution. Under those conditions, a denied action does
+not execute, even when requested by a mistaken or compromised model.
+
+The engine, policy, application code, tool implementations, and adapter are
+trusted. Model output and external content are not. Framework guides describe
+the supported paths; this page covers deployment boundaries and current limits.
+
+## Instrumentation and storage
+
+A policy can only act on what the application recorded and on checks that run before a side effect. A dispatch site with no check in front of it never reaches the reference monitor, and a missing message in the graph does not prove the event never happened. Start with [add a framework](/instrumentation/).
+
+The supplied adapters cover the framework paths their guides list. The
+[LangChain](/integrations/langchain/) and [ADK](/integrations/google-adk/)
+adapters refuse an unsupported configuration, at setup or when the unsupported
+path is reached, rather than guess dependencies; the
+[Langroid guide](/integrations/langroid/) lists the message paths its adapter
+records and how to record your own edits. Paths a guide does not list as
+supported, such as framework checkpoints, custom state and remote agents, are
+not covered. LangChain messages recorded by an earlier SDK version, before
+events carried the whole message as metadata, no longer verify when passed back:
+the conversation continues, but they are recorded as
+[unattributed external inputs](/integrations/langchain/#inputs-of-unknown-origin)
+without their earlier ancestry.
+
+An event can carry a `metadata` string, which a policy reads through
+`MessageMetadata(id, metadata)`. The relation has a row only for a message
+recorded with metadata, and it is empty under a policy plugin. See
+[add a framework](/instrumentation/#what-goes-in-the-text-and-what-goes-in-the-metadata).
+
+Policy decisions are based on a faithful record of the execution trace, so graph content and engine logs are sensitive: they hold whatever the agent read. A recorded message is recorded as it is: the SDKs do not rewrite an event's text, its metadata or a tool call's arguments, because a policy decides on them and the reference monitor is given the same bytes. Recognized transport credentials are removed only from transport metadata — span attributes, SDK diagnostic logs, and the URLs and feedback text the HTTP hooks record. Nothing removes a secret an agent reads into its own context, which was in the model's context before it reached the graph. Optional scrubbing of the prompt sent by an LLM-backed policy predicate does not redact the graph. Operators must control access, retention, request capacity, and storage capacity; per-tenant rate and durable storage quotas are not implemented.
+
+## Trust boundaries
+
+The agent's code is trusted: it defines the agents and their tools and places the checks. The content an agent reads is not trusted, and neither is the model's judgment, which can be wrong with no attacker involved. Policies are written against both.
+
+A policy is provided by an authorized user, who is responsible for it, including any custom functor (a native function) it brings. Custom functors are admin-only unless an operator opts in. To enforce a policy obtained from someone else, run the engine in a Linux environment that supports sandboxing of both policy compilation and the evaluator; [build the engine](/building/) describes that setup. macOS does not provide the same bubblewrap boundary, so it suits development with policies you wrote or trust.
+
+An in-process evaluator plugin is a different thing. It is not part of a policy: the operator loads it when starting the engine, it runs inside the engine process with the engine's privileges, and the sandbox does not apply to it. Load only a plugin you built or trust.
+
+A tool result containing secrets can disclose them to the agent's model provider
+when the framework sends its next model request. A policy check on a later
+outbound action cannot undo that disclosure. Keep secrets outside the agent's
+readable workspace, or enforce a read boundary before returning tool results.
+Credential scrubbing in transport metadata, and redaction of an LLM predicate's
+prompt, do not change the agent's own tool result or its own model requests.
+
+## Policy analysis and diagnostics
+
+Policies are preprocessed by a Python script (`sugar.py`) when they are loaded, so the engine's host needs Python. The static analyzer parses the built-in functor syntax but reports an explicit "unsupported" result for a policy that uses functors, instead of analysing it.
+
+When an action is denied because no allow rule matched, the denial trace lists each allow rule with a status in `allow_routes`. `blocked` means the rule's fixed conditions on this request cannot all hold at once — for example it names a different tool. `possible` means nothing in the request rules it out; it is a hint, not a promise that changing anything will make the rule match. `unknown` means the analysis could not decide, which is what happens with unsupported syntax or when the analysis runs out of its budget. Any suggestions shown come from the policy author's annotations. The analysis works from the request's fixed conditions only: it does not call functors again and does not evaluate rules that depend on ancestry. Relation names beginning with `SasyAllow` are reserved for the relations this analysis generates.
+
+The engine tries to work out by itself which actions need ancestry, and skips the graph walk for the rest. The analysis is conservative: where it cannot tell, it walks the graph. It never overrides a `CurrentDependsPolicyRelevant()` or `ReachableFromPolicyRelevant()` rule you wrote, and writing one yourself is never less precise and is often faster. See [policy language](/policy-language/).
+
+Runtime deadlines also cover generated diagnostic work. Compiled/interpreted parity tests and policy fixtures exercise selected cases; they are not a proof for arbitrary policies. See [policy language](/policy-language/) for rule semantics and [configuration](/configuration/) for evaluation deadlines.
+
+## Distribution scope
+
+This repository provides the engine and the gRPC policy API. The separate [sasy-guard repository](https://github.com/sasy-labs/sasy-guard) contains its released Claude Code policy and hooks; its daemon and management implementation are outside this core release.
+
+See [build the engine](/building/) for platform dependencies and policy sandboxing. Report vulnerabilities privately through the repository's Security tab on GitHub (Report a vulnerability).

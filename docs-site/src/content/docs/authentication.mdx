@@ -1,0 +1,229 @@
+---
+title: Authentication and roles
+---
+
+Authentication establishes who called SASY; roles determine which APIs that caller may use. The policy then decides whether a particular action is permitted. Keep these three decisions distinct.
+
+## Local engine authentication
+
+`sasy engine start` bootstraps an authenticated TLS engine through your local
+Docker access. It does not require an existing SASY key and does not disable
+authentication. It creates independent random API keys for `client` and `admin`,
+with tenant `default` and trust domain `sasy.local`. The client receives
+`reference-monitor-user`, `observability-writer`, and `observability-reader`
+roles; the separate admin identity also receives `admin`.
+
+The command stores only the client connection settings and CA certificate in a
+private profile under `~/.sasy/profiles/NAME/`. Server private keys and the admin
+credential remain in the Docker volume. The selected profile lets the Python
+SDK connect across project directories without copying keys into each project.
+Use `--env-file PATH` only when you want project dotenv settings as well.
+
+Use `--client-entity`, `--admin-entity`, `--tenant`, and `--trust-domain` on first
+initialization to choose identity settings. Restarting preserves credentials;
+conflicting identity requests are rejected. See [local engine](/local-engine/)
+and [launcher options](/cli/#local-engine-commands) for profiles and storage.
+
+An entity is an authenticated principal. Agent IDs and `sasy.session(entity=...)`
+label graph activity; they do not grant roles or change that principal.
+Applications sharing a profile share its client identity and tenant. Separate
+sessions distinguish executions within that identity, not security principals.
+Tenants are engine-controlled isolation scopes for graph, policy, and credential
+operations. Client-supplied labels cannot select a different tenant.
+
+Explicit SDK configuration takes precedence over environment variables, project
+`.env`, and the selected local profile. The profile's key and CA are used only
+with its endpoint; setting another endpoint requires that server's own credentials
+and TLS settings. See [client configuration](/configuration/#python-client-and-session-policy).
+
+## Configure a server and its clients
+
+The Docker/profile launcher has a limited convenience surface. For a custom
+authentication provider or deployment, invoke the Rust engine directly. Set
+`SASY_BIN` to the path of your downloaded or built Rust executable; this avoids
+resolving to the Python SDK's command, which does not implement `serve`:
+
+```bash
+SASY_BIN=/path/to/engine/sasy
+"$SASY_BIN" serve \
+  --addr 127.0.0.1:10089 \
+  --auth-provider config/auth/apikey.json \
+  --auth-config config/auth_config.yaml \
+  --tls-cert certs/server.crt \
+  --tls-key certs/server.key \
+  --data-dir data/graph
+```
+
+`--auth-provider` selects a JSON authentication provider. `--auth-config` selects
+YAML mapping authenticated entities to roles and tenants. TLS authenticates the
+server to the client; an API key, bearer token, or verified client certificate
+authenticates the caller. See [CLI](/cli/) for full server options. These provider
+files and TLS options are not options of `sasy engine start`.
+
+## API keys
+
+For normal SDK use, generate a separate random API key for each principal — the identity the engine authenticates. Treat the value as opaque: the client sends it unchanged and the engine maps it to an entity name. Entity names, roles and tenants live in the engine's configuration; they are never encoded in the key itself.
+
+The API-key provider's JSON schema is:
+
+```json
+{
+  "type": "api_key",
+  "metadata_key": "x-api-key",
+  "static_keys": {
+    "<GENERATE_A_UNIQUE_RANDOM_KEY_FOR_WORKER>": "worker",
+    "<GENERATE_A_DIFFERENT_RANDOM_KEY_FOR_REVIEWER>": "reviewer"
+  }
+}
+```
+
+These placeholders are not credentials; replace each with an independent secret before loading the file with `--auth-provider`. Map `worker` and `reviewer` to their required roles and tenants in your `--auth-config` file. Store the provider configuration privately and give each client only its own key.
+
+Python sends the full key through an explicit hook:
+
+```python
+import os
+import sasy
+from sasy.auth.hooks import APIKeyAuthHook
+
+sasy.configure(
+    sasy_url=os.environ["SASY_URL"],
+    ca_path="certs/server.crt",  # Use your operator's CA for a remote engine.
+    auth_hook=APIKeyAuthHook(api_key=os.environ["SASY_API_KEY"]),
+)
+```
+
+`APIKeyAuthHook` sends the value verbatim. The TypeScript equivalent is `new ApiKeyAuthHook(key)`. Python also reads `SASY_API_KEY` from the environment or a `.env` file when no explicit hook is given; an explicit hook wins. Neither SDK builds a key out of an entity name, and neither falls back to a shipped demo key when no credential is configured.
+
+SASY's credential-injection sources are separate from these client authentication keys. SQLite is suitable for local development; deployments can use environment-seeded memory or a read-only source in OpenBao, an open-source secrets server. Injection fails closed when the selected credential source errors. The application owns credential storage and rotation.
+
+## JWT and OpenID Connect
+
+For OpenID Connect (OIDC), the identity layer on top of OAuth 2.0 that issues signed JSON Web Tokens (JWTs), copy `config/auth/jwt.example.json` to the ignored local `config/auth/jwt.json`, edit it with the provider's exact JSON Web Key Set (JWKS) URL — where the provider publishes the public keys that verify its tokens — its issuer and the SASY audience, then start the engine with that file as `--auth-provider` and your `--auth-config` mapping. Obtain those URLs from your provider's discovery document; the example domain is intentionally not usable. The JWT provider verifies signatures and configured issuer/audience. It reads the bearer token from `authorization`, resolves the entity from `sub` by default, and caches JWKS keys for the configured interval.
+
+A minimal JWKS provider configuration is:
+
+```json
+{
+  "type": "jwt",
+  "metadata_key": "authorization",
+  "jwks_url": "https://YOUR-OIDC-ISSUER/.well-known/jwks.json",
+  "issuer": "https://YOUR-OIDC-ISSUER/",
+  "audience": "sasy",
+  "entity_claim": "sub",
+  "roles_claim": "roles",
+  "jwks_cache_seconds": 300,
+  "use_central_roles": true
+}
+```
+
+Replace the issuer, audience and JWKS URL with your provider's values. JWT
+verification also supports `hmac_secret` or `rsa_pem_file` as signing-key sources;
+use the key source appropriate to your issuer. Tenants always come from the
+engine's entity mapping, even when roles come from JWT claims.
+
+For a token managed by your application, configure Python explicitly:
+
+```python
+import os
+import sasy
+from sasy.auth.hooks import StaticTokenAuthHook
+
+sasy.configure(
+    sasy_url=os.environ["SASY_URL"],
+    ca_path=os.environ["TLS_CA_PATH"],
+    auth_hook=StaticTokenAuthHook(token=os.environ["SASY_ACCESS_TOKEN"]),
+)
+```
+
+The hook adds `Bearer ` to the token. `OIDCAuthHook` obtains and refreshes a token
+from a configured `token_url` using client credentials. `BrowserAuthHook` and
+`DeviceAuthHook` support interactive provider flows. Configure the issuer's
+client registration and grant settings before using those hooks; a local API-key
+profile does not supply OIDC credentials.
+
+SASY does not automatically translate an organization's groups into its roles. Choose one approach:
+
+- With `use_central_roles: true`, map stable authenticated entity values in `config/auth_config.yaml` to SASY roles and tenants. A missing entity has no configured roles. Replace the local example entities with real subjects before enabling OIDC.
+- With `use_central_roles: false`, configure `roles_claim` to a claim issued by your trusted identity provider. Nested names are supported. That claim must already contain SASY role names; configure the provider's group-to-role mapping yourself. Clients cannot assign themselves privileged roles.
+
+## Role permissions
+
+| Role | Intended capability |
+|---|---|
+| `observability-writer` | Register graph observations. |
+| `observability-reader` | Read observations within permitted scope. |
+| `reference-monitor-user` | Request action checks and bind permitted session policies. |
+| `admin` | Administrative policy operations and privileged exceptions. |
+| `service-proxy` | Lets one service present checks on behalf of another authenticated caller. Reserve it for infrastructure you operate. |
+
+Tenant-wide policy changes and privileged bypasses require the relevant authenticated and delegated identities to satisfy the server's checks. Do not give every client `admin` or `service-proxy` to make a demo work. Serve remote clients over TLS and provision trust roots independently. The local example uses API keys over server-authenticated TLS; mTLS is a separate deployment choice.
+
+## Mutual TLS identities
+
+In mutual TLS (mTLS) the client presents a certificate too, and the engine takes the caller's identity from it. For certificate-based identity, use `{"type": "mtls"}` as the provider JSON and supply `--tls-cert`, `--tls-key`, and `--tls-ca` to the engine. The last file is the CA that may issue client certificates. The authenticated entity is the verified client certificate's Common Name (CN); map that value to roles and a tenant in `--auth-config`. A caller-supplied identity header cannot replace the verified certificate identity.
+
+Configure Python with `ca_path` to trust the server and `cert_path`/`key_path` for its client certificate and private key. TypeScript uses `caPath`, `certPath`, and `keyPath`. API-key hooks are unnecessary when the selected provider is mTLS. Certificate issuance and access to private keys remain the operator's responsibility.
+
+For example, a Python client using only mTLS can suppress token metadata while
+presenting its certificate:
+
+```python
+import sasy
+from sasy.auth.hooks import NoAuthHook
+
+sasy.configure(
+    sasy_url="engine.example:10089",
+    ca_path="certs/server-ca.crt",
+    cert_path="certs/client.crt",
+    key_path="certs/client.key",
+    auth_hook=NoAuthHook(),
+)
+```
+
+`NoAuthHook` sends no token; authentication still occurs through the verified
+client certificate. It does not turn off the server's authentication.
+
+## Provider chains
+
+A `chain` provider tries its members in order and uses the identity, roles, and
+tenant from the first successful authentication. It is an alternative-provider
+composition, not a requirement that every provider authenticate:
+
+```json
+{
+  "type": "chain",
+  "providers": [
+    {"type": "mtls"},
+    {
+      "type": "api_key",
+      "metadata_key": "x-api-key",
+      "static_keys": {"<GENERATE_AN_INDEPENDENT_RANDOM_KEY>": "worker"}
+    }
+  ]
+}
+```
+
+Configure the engine's TLS trust for client certificates and its entity mappings
+for both providers. The TLS listener's client-certificate requirement still
+applies before the authentication chain runs; adding an API-key member does not
+make client certificates optional on a listener configured to require them.
+If all providers fail, the request is unauthenticated. Do not add a passthrough
+provider to an authenticated deployment.
+
+## Upgrading from sasy 0.4
+
+Older SDK code named a principal and let the client build its key. Replace
+`entity_api_key`, `entityApiKey`, `ApiKeyAuthHook.forEntity` and any
+entity-key constructor option with one key generated for that principal, and set
+`SASY_API_KEY` instead of the old suffix configuration. Neither SDK composes a
+key any more, and a client with no credential is simply unauthenticated.
+
+The engine still accepts the server-side `SASY_API_KEY_SUFFIX` setting so an
+existing deployment keeps working. Leave it unset on an engine configured with
+whole keys: a non-empty value is appended to every configured key, and the SDK
+does not append it, so the deployment has to hand each client the resulting
+complete key. That scheme cannot separate principals — anyone holding one key
+whose prefix is public can work out the suffix and construct the others — so
+move to independent keys and rotate the whole old family when you do. The engine
+refuses the key names shipped in the example files by default.

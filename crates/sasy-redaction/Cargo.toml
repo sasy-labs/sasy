@@ -1,0 +1,17 @@
+[package]
+name = "sasy-redaction"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Secret scrubbing for the strings the SASY engine sends to logs, caches and LLM providers"
+
+[lib]
+name = "sasy_redaction"
+
+[dependencies]
+regex = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sasy-common = { workspace = true }

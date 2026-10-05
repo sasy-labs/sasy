@@ -1,0 +1,32 @@
+[package]
+name = "sasy-server"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Observability gRPC server (events, slicing, streaming)"
+
+[lib]
+name = "sasy_server"
+
+[[bin]]
+name = "sasy-server"
+path = "src/bin/sasy_server.rs"
+
+[dependencies]
+clap = { workspace = true }
+anyhow = { workspace = true }
+tracing-subscriber = { workspace = true }
+sasy-common = { workspace = true }
+sasy-graph = { workspace = true }
+sasy-auth = { workspace = true }
+tonic = { workspace = true }
+tokio = { workspace = true }
+tokio-stream = { workspace = true }
+prost = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+thiserror = { workspace = true }
+uuid = { workspace = true }

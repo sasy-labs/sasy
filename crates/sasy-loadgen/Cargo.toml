@@ -1,0 +1,25 @@
+[package]
+name = "sasy-loadgen"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Synthetic gRPC load generator for SASY policy engine benchmarks"
+
+[[bin]]
+name = "sasy-loadgen"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = { workspace = true }
+clap = { workspace = true }
+rustls = { workspace = true }
+sasy-auth = { path = "../sasy-auth" }
+sasy-common = { path = "../sasy-common" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+tonic = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }

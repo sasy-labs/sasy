@@ -1,0 +1,163 @@
+---
+title: Build from source
+description: Build SASY with Docker, Nix, or a manual toolchain.
+---
+
+The [quick start](/get-started/) runs a prebuilt Docker image with `sasy engine start`.
+To build a modified engine, choose **Docker**, **Nix**, or a **manual toolchain**.
+**Nix** is the recommended way to build on your
+own machine: one command gives you the exact toolchain this repository pins, and
+on Linux it also builds an engine package whose policy compilation is sandboxed.
+A **manual toolchain** works too, if you install each tool yourself.
+
+## Docker
+
+Build from the source in this checkout, then serve the local image:
+
+```bash
+make docker-build
+make docker-serve
+```
+
+The Docker build uses the engine package from `flake.nix` and `flake.lock`,
+including its pinned Soufflé, C++ compiler, Python, and runtime libraries. Nix
+runs inside a builder stage; you do not need Nix installed on the host. The
+final image contains the engine and its runtime dependencies and runs as a
+non-root user. Run the SDK and examples locally with uv.
+
+To run the local image with the SDK's command instead, stop any running engine
+with `uv run sasy engine stop`, then run `uv run sasy engine start --image sasy`.
+
+To keep an engine running and connect an agent, follow
+[start a local engine](/local-engine/).
+
+The image sets `DISABLE_BWRAP=1` because ordinary Docker permissions do not
+provide the nested namespaces needed by Bubblewrap. Policy compilation relies
+on container isolation; compile only policies you trust. This setting applies
+only to the Docker image. The native Nix package keeps its sandbox enabled;
+see the Linux requirements below.
+
+## Nix
+
+Nix is the recommended way to build on your own machine.
+
+`flake.nix` and `flake.lock` pin the Rust, native, Python and JavaScript development tools. Install Nix separately, then enter the shell from the repository root:
+
+```bash
+scripts/nix-dev.sh
+python3 scripts/nix-smoke.py
+```
+
+The launcher keeps an ignored profile under `.nix/` so Nix garbage collection
+cannot remove the shell’s policy compiler and headers. Keep that directory while
+using this checkout; remove it only after stopping its engines and shells.
+
+The smoke check compiles and runs Rust, loads libclang, processes a protobuf definition, and compares interpreted and compiled SASY policy decisions. It uses temporary files and does not start an engine.
+
+On Linux, build the engine and its runtime policy toolchain with:
+
+```bash
+nix/build.sh
+./result/bin/sasy --help
+```
+
+This package includes the engine's default features, Soufflé and matching headers, the C++ compiler, Python, and the interpreted backend's native assets. Use the installed `bin/sasy` launcher: it selects the packaged tools and assets, so policy compilation does not depend on the current source checkout. Build outputs and their dependencies remain in the Nix store. These are Nix packages, not portable standalone binaries or release wheels.
+
+The Linux launcher also selects a packaging-generated runtime manifest. This lists the Nix dependency paths that the policy sandbox may mount read-only and the tools it may execute. The engine validates the manifest and uses a controlled search path inside the sandbox. The interpreted evaluator receives the explicit directory of the selected policy’s functor library, preventing an unrelated installed library from taking precedence. Invalid configuration must fail rather than fall back to unsandboxed execution. The manifest is operator configuration; policy authors cannot supply extra filesystem paths through a policy upload. The manifest and selected store items must be root-owned and read-only. User-owned single-user Nix stores are not supported by this runtime integration.
+
+When Bubblewrap is installed and usable, policy compilation runs inside it. If it is absent, or `DISABLE_BWRAP=1` is set, compilation runs unconfined; if it is installed but cannot create namespaces, the engine refuses to compile rather than fall back. Bubblewrap is a Linux tool that runs a process in its own namespaces with a restricted view of the filesystem. Compilation is confined that way. The evaluator process can additionally run under a seccomp filter, the kernel facility that blocks system calls; the compile step does not use one. The host must permit Bubblewrap's namespaces and mounts; container hosts can restrict those operations independently of SASY. Keep the sandbox enabled when testing a deployment: a toolchain check that ran outside the sandbox says nothing about whether the deployment can compile and evaluate policies safely.
+
+The launchers select their source inputs explicitly. `scripts/nix-dev.sh` stages the flake definitions needed for the development shell. `nix/build.sh` stages only the explicitly listed build inputs in `nix/source-files.json` and the packaging definitions. Local credentials and installed dependencies are excluded. Directly evaluating the entire checkout as a flake does not provide this source filtering.
+
+The development shell has Linux and macOS outputs for ARM64 and x86-64. The engine package builds on Linux only. A platform appearing in this list means the definition covers it, not that a build has been tested there; test the binary you intend to run.
+
+## Manual toolchain
+
+The engine is a Rust application. Install Rust/Cargo, a C++ compiler, CMake, libclang, `protoc`, Python 3.11 or newer, and Soufflé with its development headers and `mcpp`. Local TLS setup also uses OpenSSL. The Python SDK uses uv; JavaScript SDK builds use Node/npm and SDK tests use Bun. Consult your platform's packages for these dependencies.
+
+From the source repository with a manual toolchain, or inside the Nix shell on macOS:
+
+```bash
+make build-rust  # Optimized engine: target/full-release/release/sasy
+```
+
+To try the build, start it with `make init-config certs` followed by
+`make serve`, then run `uv run examples/message-flow/demo.py` in another
+terminal. The SDK setup is described in [start a local engine](/local-engine/#connect-your-agent-from-any-project).
+
+`make build-rust-dev` builds a faster-to-compile development binary at
+`target/debug/sasy`. `make serve` uses the optimized binary by
+default; to run the development build, set
+`SASY_BIN=target/debug/sasy`. Both builds use the committed Cargo
+lockfile. Override `SASY_RELEASE_TARGET_DIR` to choose another optimized build
+directory. `make build-rust-release` remains an alias for `make build-rust`.
+
+Raw Cargo builds and these make targets do not create the Nix runtime manifest.
+On Linux, entering the Nix shell alone does not make its store paths available
+inside the policy sandbox. Use `nix/build.sh` and the packaged `result/bin/sasy`
+launcher for Linux Nix operation, as described [above](#nix).
+
+The engine embeds its policy compiler source assets, but still invokes Soufflé, `mcpp`, and a C++ compiler when compiling new policies. Those tools and headers must be available on the machine running the engine. Match the Soufflé runtime and headers, including their `RamDomain` word size. Copying the executable alone does not install this toolchain.
+
+`mcpp` is the C preprocessor Soufflé runs over a policy before compiling it.
+Soufflé can be built with 32-bit or 64-bit values internally (its `RamDomain`
+word size); the headers on the machine must match the Soufflé binary, or a
+compiled policy will not load.
+
+## Full and restricted engines
+
+`make build-rust` produces the **full engine**: it compiles and runs whatever
+policy a client binds. Everything in this documentation assumes it.
+
+A **restricted engine** is the same source built with the `SASY_POLICY_PACK`
+environment variable set to a directory of policies, which are compiled into the
+binary as its **baked profiles**. Such a build serves only those profiles; it
+cannot compile or load a policy sent at run time, and no command-line flag or
+environment variable at start-up changes that. This repository's make targets do
+not build one.
+
+## Configure a local instance
+
+Create the local configuration and TLS certificate before starting a native
+engine:
+
+```bash
+make init-config certs
+```
+
+On Linux with Nix, enter `scripts/nix-dev.sh`, build with `nix/build.sh`, then
+start the packaged launcher explicitly:
+
+```bash
+make serve SASY_BIN="$PWD/result/bin/sasy"
+```
+
+For a macOS Nix shell or a manual optimized build, use `make serve`.
+For a development build, use
+`make serve SASY_BIN=target/debug/sasy`.
+The native engine uses the same local configuration and TLS files, listens
+on `127.0.0.1:10089`, and stores the graph in `data/graph`. Leave it running and
+[configure your SDK terminal](/local-engine/#connect-your-agent-from-any-project).
+
+## Preview the documentation
+
+From the repository root, with Node.js 24 or newer:
+
+```bash
+cd docs-site
+npm ci
+npm run dev
+```
+
+Open the local URL printed by Astro. For the production output, run `npm run build` and then `npx astro preview`.
+
+## Checking your build
+
+`make check-rust` compiles every workspace target without linking, and
+`make lint-rust` checks formatting and runs Clippy with warnings treated as
+errors. Neither runs tests. `tests/README.md` in the repository lists the test
+lanes, including the ones that compare the compiled and interpreted policy
+backends.
+
+For a deployment build, verify TLS, authentication, policy compilation, and
+an allowed and a denied action against the binary you will run.

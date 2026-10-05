@@ -1,0 +1,94 @@
+[package]
+name = "sasy-binary"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "The sasy binary: runs the SASY policy engine and its gRPC services in one process"
+
+[[bin]]
+name = "sasy"
+path = "src/main.rs"
+
+# Build-time tool: precompiles curated policies into an evaluator pack.
+# Not shipped in restricted builds (it pulls the compiler/toolchain path), so it
+# requires the `compiler` feature — cargo skips this bin under restricted (and
+# under `cargo test --features restricted`, which builds all targets).
+[[bin]]
+name = "pack-policies"
+path = "src/bin/pack-policies.rs"
+required-features = ["compiler"]
+
+[features]
+# Default (full) build keeps the LLM oracle + the policy compiler. The
+# restricted build (`--no-default-features --features restricted`) ships
+# precompiled policies, no policy compiler, and binds to loopback only.
+default = ["llm-oracle"]
+# Compiler rides on llm-oracle (not `default` directly) so it travels with the
+# full engine while the workspace's `default-features = false` on sasy-policy
+# strips it from the restricted build. `compiler` also gates the pack-policies
+# bin (required-features), so it is skipped under restricted.
+#
+# NOTE: the reference monitor (sasy-refmon, which serves RMProxy CheckToolCall)
+# is NOT feature-gated out of restricted — a co-located client enforces every
+# tool call through CheckToolCall, so it is load-bearing at runtime in the
+# restricted build too. sasy-credential IS gated out: it is an optional
+# dependency enabled only by `proxy`, which rides on llm-oracle, so the
+# restricted build has no credential stack at all (see the `proxy` comment
+# below).
+llm-oracle = ["sasy-policy/llm", "compiler", "proxy", "neo4j-sync", "full-auth"]
+compiler = ["sasy-policy/compiler"]
+# The reference monitor's outbound HTTP mediation + credential stack: the
+# forward proxy, the gRPC ProxyHTTP arm, credential injection, and the
+# credential server. NONE of it is on the CheckToolCall enforcement path (a
+# client injects credentials itself from the returned transform_ids), so
+# the restricted build drops it — and the sasy-credential/rusqlite, hyper,
+# and reqwest deps with it — while CheckToolCall (served by sasy-refmon) stays.
+# Rides on llm-oracle so the full build keeps it and --no-default-features
+# (restricted) strips it.
+# `sasy-credential/openbao` is named explicitly: the serve path builds the
+# OpenBao backend, so it has to be compiled in wherever the proxy stack is.
+proxy = ["sasy-refmon/proxy", "dep:sasy-credential", "sasy-credential/openbao"]
+# Neo4j background graph sync (sasy-graph's only reqwest user). Dropped from
+# the restricted build, which does not mirror its graph anywhere.
+neo4j-sync = ["sasy-graph/neo4j-sync"]
+# All authentication providers. The restricted guard retains only mTLS
+# authentication, dropping JWT/JWKS and outbound HTTP dependencies.
+full-auth = ["sasy-auth/full-auth", "mtls"]
+# Local guard authentication keeps certificate support without JWT/JWKS,
+# outbound HTTP auth, or the credential stack.
+mtls = ["sasy-auth/mtls", "dep:rcgen", "dep:time", "dep:libc"]
+# Restricted build: bakes precompiled policy evaluators in, rejects custom
+# policy authoring, and strips the policy compiler and its toolchain (no
+# runtime compile path). See src/restricted.rs and build.rs.
+restricted = ["mtls"]
+
+[dependencies]
+sasy-common = { workspace = true }
+sasy-graph = { workspace = true }
+sasy-auth = { workspace = true }
+sasy-credential = { workspace = true, optional = true }
+sasy-server = { workspace = true }
+sasy-refmon = { workspace = true }
+sasy-policy = { workspace = true }
+policy-sdk = { workspace = true }
+tonic = { workspace = true }
+tokio = { workspace = true }
+clap = { workspace = true }
+rustls = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+anyhow = { workspace = true }
+serde_json = { workspace = true }
+rcgen = { version = "0.14.10", default-features = false, features = ["crypto", "pem", "aws_lc_rs", "zeroize"], optional = true }
+time = { version = "0.3", optional = true }
+libc = { version = "0.2", optional = true }
+
+[build-dependencies]
+serde_json = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"
+rustls-pemfile = { workspace = true }
+x509-parser = "0.16"

@@ -1,0 +1,96 @@
+{
+  "version": 1,
+  "vectors": [
+    {
+      "name": "empty",
+      "event": {},
+      "canonical_proto_hex": "",
+      "sha256": "7caf6b69c70cfa1e7aa15a8720643b70a7199a0b96ee26eb938dac1dc0ba3116"
+    },
+    {
+      "name": "empty_fields",
+      "event": {
+        "text": "",
+        "agent": "",
+        "role": 0,
+        "entity": "",
+        "derivedFrom": {},
+        "tools": [
+          {}
+        ]
+      },
+      "canonical_proto_hex": "0a00120018002a0032004a00",
+      "sha256": "db9122809e2741f3aff23924d6475e8f6f336bc6db65087948b5457d8613d6b6"
+    },
+    {
+      "name": "unicode",
+      "event": {
+        "id": "origin",
+        "principal": "ignored",
+        "text": "café é 水 😀",
+        "role": 2,
+        "agent": "assistant",
+        "entity": "alice"
+      },
+      "canonical_proto_hex": "0a12636166c3a92065cc8120e6b0b420f09f98801209617373697374616e7418024a05616c696365",
+      "sha256": "870206cb2fc96649e2d6e7c894c3fbbcf30b0115ea43c2b953ed94145af1b853"
+    },
+    {
+      "name": "tools",
+      "event": {
+        "text": "call",
+        "tools": [
+          {
+            "name": "first",
+            "arguments": "{\"x\":1}"
+          },
+          {
+            "name": "second",
+            "arguments": ""
+          },
+          {}
+        ],
+        "derivedFrom": {
+          "name": "producer",
+          "arguments": "{}"
+        }
+      },
+      "canonical_proto_hex": "0a0463616c6c2a100a05666972737412077b2278223a317d2a0a0a067365636f6e6412002a00320e0a0870726f647563657212027b7d",
+      "sha256": "64a8b52341e7fa50ea0a991cc58b771ce0948908bbec9529790a7d441b4bbb39"
+    },
+    {
+      "name": "identity_ignored",
+      "event": {
+        "id": "another",
+        "principal": "another"
+      },
+      "canonical_proto_hex": "",
+      "sha256": "7caf6b69c70cfa1e7aa15a8720643b70a7199a0b96ee26eb938dac1dc0ba3116"
+    },
+    {
+      "name": "optional_empty_name",
+      "event": {
+        "tools": [
+          {
+            "name": ""
+          }
+        ]
+      },
+      "canonical_proto_hex": "2a020a00",
+      "sha256": "74e151142b6e337ef3530c4eaf2a315d33028fed72a44f9fa95c80f93e60454b"
+    },
+    {
+      "name": "optional_empty_arguments",
+      "event": {
+        "tools": [
+          {
+            "arguments": ""
+          }
+        ]
+      },
+      "canonical_proto_hex": "2a021200",
+      "sha256": "081a10f440775ababfe6056499697acd6476e645e967784d3edf73ee0d075bc1"
+    }
+  ],
+  "domain_hex": "736173793a6576656e742d636f6e74656e743a763100"
+}

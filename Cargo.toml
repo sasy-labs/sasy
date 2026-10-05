@@ -1,0 +1,120 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/sasy-common",
+    "crates/sasy-redaction",
+    "crates/sasy-graph",
+    "crates/sasy-auth",
+    "crates/sasy-credential",
+    "crates/sasy-server",
+    "crates/sasy-refmon",
+    "crates/sasy-policy-analysis",
+    "crates/sasy-policy",
+    "crates/sasy-binary",
+    "crates/policy-sdk",
+    "crates/policy-plugin",
+    "crates/sasy-loadgen",
+]
+[workspace.package]
+version = "0.5.0"
+edition = "2021"
+# The copyright holder named in NOTICE, not a person. These are the fields a
+# published crate advertises; the crates inherit them with
+# `authors.workspace` / `repository.workspace`.
+authors = ["Sasy, Inc."]
+license = "Apache-2.0"
+repository = "https://github.com/sasy-labs/sasy"
+description = "Policy enforcement for LLM agent systems"
+
+[workspace.dependencies]
+# Only for signalling a process GROUP on compile timeout; see compiler.rs.
+libc = "0.2"
+# gRPC
+tonic = { version = "0.12", features = ["tls", "tls-roots"] }
+tonic-build = "0.12"
+prost = "0.13"
+prost-types = "0.13"
+
+# Async runtime
+tokio = { version = "1", features = [
+    "full", "sync", "time", "rt-multi-thread", "macros",
+] }
+tokio-stream = "0.1"
+futures = "0.3"
+
+# Graph
+petgraph = "0.6"
+
+# Persistence
+rocksdb = "0.22"
+rusqlite = { version = "0.32", features = ["bundled"] }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+serde_yaml = "0.9"
+
+# Auth
+# jsonwebtoken 10 pulls in rustls for EC key handling; enable aws_lc_rs
+# to match the rest of the workspace (rustls is already configured with
+# aws-lc-rs below). Without a feature selection it panics at runtime
+# with "Could not automatically determine the process-level CryptoProvider".
+jsonwebtoken = { version = "10", default-features = false, features = ["use_pem", "aws_lc_rs"] }
+rustls = { version = "0.23", features = ["aws-lc-rs"] }
+tokio-rustls = { version = "0.26", features = ["aws-lc-rs"] }
+rustls-pemfile = "2"
+
+# HTTP
+reqwest = { version = "0.12", features = [
+    "json", "rustls-tls", "gzip", "deflate", "brotli", "stream",
+] }
+hyper = { version = "1", features = ["http1", "server"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+http-body-util = "0.1"
+url = "2"
+
+# CLI
+# `env` lets a flag fall back to an environment variable, which is how the
+# credential backend and its OpenBao settings are supplied in a container.
+clap = { version = "4", features = ["derive", "env"] }
+
+# Logging and errors
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+thiserror = "2"
+anyhow = "1.0"
+
+# Synchronization
+parking_lot = "0.12"
+
+# Utilities
+uuid = { version = "1", features = ["v4"] }
+regex = "1"
+libloading = "0.8"
+fnv = "1.0"
+
+# Workspace crates
+sasy-common = { path = "crates/sasy-common", version = "0.5.0" }
+sasy-redaction = { path = "crates/sasy-redaction", version = "0.5.0" }
+# default-features=false lets the restricted binary drop the neo4j-sync feature
+# (reqwest). The full sasy-binary build re-enables it via llm-oracle.
+sasy-graph = { path = "crates/sasy-graph", version = "0.5.0", default-features = false }
+# default-features=false lets the restricted binary drop the non-passthrough
+# auth providers (jsonwebtoken, reqwest, x509-parser). Full build re-enables via
+# llm-oracle. MUST live here: Cargo ignores default-features on workspace=true.
+sasy-auth = { path = "crates/sasy-auth", version = "0.5.0", default-features = false }
+sasy-credential = { path = "crates/sasy-credential", version = "0.5.0" }
+sasy-server = { path = "crates/sasy-server", version = "0.5.0" }
+# default-features=false lets the restricted binary drop sasy-refmon's `proxy`
+# feature (forward proxy + gRPC ProxyHTTP + credential injection → hyper,
+# reqwest, sasy-credential). The full sasy-binary build re-enables it via
+# llm-oracle. MUST live here: Cargo ignores default-features on a
+# `workspace = true` use-site.
+sasy-refmon = { path = "crates/sasy-refmon", version = "0.5.0", default-features = false }
+sasy-policy-analysis = { path = "crates/sasy-policy-analysis", version = "0.5.0" }
+# default-features = false strips sasy-policy's `compiler` feature graph-wide;
+# the full sasy-binary build re-enables it via llm-oracle, so the restricted
+# build (which omits llm-oracle) actually drops the toolchain. MUST live here:
+# Cargo ignores default-features on a `workspace = true` use-site.
+sasy-policy = { path = "crates/sasy-policy", version = "0.5.0", default-features = false }
+policy-sdk = { path = "crates/policy-sdk", package = "sasy-policy-sdk", version = "0.5.0" }

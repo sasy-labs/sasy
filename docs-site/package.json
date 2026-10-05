@@ -1,0 +1,16 @@
+{
+  "name": "sasy-public-docs",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "astro dev",
+    "build": "astro build",
+    "preview": "astro preview",
+    "test": "node --test tests/*.test.mjs"
+  },
+  "dependencies": {
+    "@astrojs/starlight": "0.41.11",
+    "astro": "7.3.1",
+    "starlight-llms-txt": "0.12.0"
+  }
+}
