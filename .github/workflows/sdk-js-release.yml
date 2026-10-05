@@ -18,7 +18,7 @@ jobs:
   core:
     # Branch/PR pushes already run ci-core; release tags and dispatch must gate here.
     if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')
-    uses: ./.github/workflows/ci-core.yml
+    uses: ./.github/workflows/ci.yml
     permissions:
       contents: read
 

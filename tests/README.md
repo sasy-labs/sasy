@@ -60,7 +60,7 @@ actual Soufflé parser. Select it explicitly after installing Soufflé:
 .venv/bin/python -m pytest -q --run-toolchain -m toolchain
 ```
 
-The CI workflow `.github/workflows/ci-core.yml` also runs, on Linux, the
+The CI workflow `.github/workflows/ci.yml` also runs, on Linux, the
 sandboxed policy compilation and runtime checks and the comparison between the
 compiled and interpreted Soufflé backends. A passing run on macOS says nothing
 about the Linux sandbox, which has no macOS equivalent.
@@ -94,7 +94,7 @@ make lint-rust
 
 The TypeScript runner requires Bun. Rust tests marked `#[ignore]` need extra
 prerequisites and a separate `cargo test -- --ignored` run;
-`.github/workflows/ci-core.yml` shows which ones CI runs and with what installed.
+`.github/workflows/ci.yml` shows which ones CI runs and with what installed.
 
 `make lint-rust` runs `cargo fmt --check` and Clippy for all workspace targets
 with warnings treated as errors. CI uses Rust 1.95.0 and the locked dependencies.

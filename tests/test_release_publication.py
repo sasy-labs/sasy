@@ -96,7 +96,7 @@ def test_publication_graph_has_one_core_gate_and_no_independent_image_trigger():
     assert set(engine["on"]) == {"workflow_call"}
     assert sdk["jobs"]["engine"]["uses"] == "./.github/workflows/engine-release.yml"
     assert sdk["jobs"]["core"]["if"] == "github.event_name == 'workflow_dispatch' && inputs.recovery_run == ''"
-    assert engine["jobs"]["core"]["uses"] == "./.github/workflows/ci-core.yml"
+    assert engine["jobs"]["core"]["uses"] == "./.github/workflows/ci.yml"
     assert set(engine["jobs"]["build"]["needs"]) == {"version", "core"}
     assert set(engine["jobs"]["publish"]["needs"]) == {"version", "build"}
     publish = sdk["jobs"]["publish"]

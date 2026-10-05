@@ -39,7 +39,7 @@ jobs:
   core:
     # The same gate as the SDK release: the full CI suite must pass first.
     needs: version
-    uses: ./.github/workflows/ci-core.yml
+    uses: ./.github/workflows/ci.yml
     permissions:
       contents: read
 

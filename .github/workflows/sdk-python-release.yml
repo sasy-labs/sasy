@@ -24,7 +24,7 @@ jobs:
   core:
     # Branch/PR pushes run ci-core separately; tag releases gate inside engine.
     if: github.event_name == 'workflow_dispatch' && inputs.recovery_run == ''
-    uses: ./.github/workflows/ci-core.yml
+    uses: ./.github/workflows/ci.yml
     permissions:
       contents: read
 

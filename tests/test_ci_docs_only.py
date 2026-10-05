@@ -26,7 +26,7 @@ def test_any_code_or_package_file_requires_the_full_gate():
     for path in [
         "crates/sasy-binary/src/main.rs", "sdk/python/sasy/cli.py", "sdk/python/README.md",
         "tests/test_engine_cli.py", "Dockerfile", "Makefile", "Cargo.lock",
-        ".github/workflows/ci-core.yml", "examples/message-flow/demo.py", "souffle/sugar.py",
+        ".github/workflows/ci.yml", "examples/message-flow/demo.py", "souffle/sugar.py",
     ]:
         assert classify(["README.md", path]) == 1, path
 

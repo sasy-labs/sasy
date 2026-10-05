@@ -37,7 +37,7 @@ def test_unqualified_or_unavailable_sources_fail_closed(problem):
     elif problem == 'branch': run['head_branch'] = 'main'
     elif problem == 'pr': run['event'] = 'pull_request'
     elif problem == 'running': run['status'] = 'in_progress'
-    elif problem == 'other_workflow': run['path'] = '.github/workflows/ci-core.yml'
+    elif problem == 'other_workflow': run['path'] = '.github/workflows/ci.yml'
     elif problem == 'moved_tag': tag_sha = 'b' * 40
     elif problem == 'failed_gate': jobs[0]['conclusion'] = 'failure'
     elif problem == 'missing_gate': jobs.pop()
