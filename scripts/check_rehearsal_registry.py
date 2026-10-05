@@ -9,8 +9,15 @@ import urllib.request
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--allow-missing', action='store_true')
 args = parser.parse_args()
+destinations = {
+    'ghcr.io/nilspalumbo/sasy-test': 'users/nilspalumbo/packages/container/sasy-test',
+    'ghcr.io/sasy-labs/sasy': 'orgs/sasy-labs/packages/container/sasy',
+}
+image = os.environ.get('IMAGE', '')
+if image not in destinations:
+    raise SystemExit('Unrecognized rehearsal image destination')
 request = urllib.request.Request(
-    'https://api.github.com/users/nilspalumbo/packages/container/sasy-test',
+    'https://api.github.com/' + destinations[image],
     headers={'Authorization': 'Bearer ' + os.environ['GH_TOKEN'],
              'Accept': 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28'},
 )

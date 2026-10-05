@@ -13,7 +13,7 @@ concurrency:
 
 jobs:
   build:
-    if: github.repository == 'nilspalumbo/sasy-test' && github.event.repository.private
+    if: github.event.repository.private && (github.repository == 'nilspalumbo/sasy-test' || (github.repository == 'sasy-labs/sasy' && github.repository_id == '1405994907'))
     strategy:
       fail-fast: false
       matrix:
@@ -32,7 +32,7 @@ jobs:
     env:
       ARCH: ${{ matrix.arch }}
       MACHINE: ${{ matrix.machine }}
-      IMAGE: ghcr.io/nilspalumbo/sasy-test
+      IMAGE: ghcr.io/${{ github.repository }}
       REHEARSAL: rehearsal-${{ github.run_id }}-${{ github.run_attempt }}
       DOCKER_LABEL: sasy-rehearsal=${{ github.run_id }}-${{ github.run_attempt }}
     steps:
@@ -149,7 +149,7 @@ jobs:
       packages: write
     env:
       GH_TOKEN: ${{ github.token }}
-      IMAGE: ghcr.io/nilspalumbo/sasy-test
+      IMAGE: ghcr.io/${{ github.repository }}
       REHEARSAL: rehearsal-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7

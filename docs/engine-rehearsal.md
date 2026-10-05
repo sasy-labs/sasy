@@ -1,7 +1,7 @@
 # Engine release rehearsal
 
 The manually dispatched `Engine release rehearsal` workflow currently runs only
-in the private `nilspalumbo/sasy-test` staging repository. It builds Linux x86-64
+in private `sasy-labs/sasy` or `nilspalumbo/sasy-test` staging repositories. It builds Linux x86-64
 and ARM64 on native runners from the locked Nix package used by the Dockerfile.
 Each imported engine bundle and final container image must pass real policy
 compilation, allow/deny, dependency-graph and policy-rebinding checks before the
@@ -11,7 +11,8 @@ not the complete security, sandbox or core regression suite.
 
 Images live in GitHub Container Registry, not in Git history. The workflow uses
 its repository-scoped GitHub token and publishes only unique `rehearsal-*` tags
-under `ghcr.io/nilspalumbo/sasy-test`; it never advances `latest`. New GHCR packages
+under `ghcr.io/sasy-labs/sasy` or `ghcr.io/nilspalumbo/sasy-test`, matching
+the repository where the workflow runs; it never advances `latest`. New GHCR packages
 are private by default. Production Docker Hub publishing is configured separately.
 The multi-platform tag includes both `linux/amd64` and `linux/arm64`.
 

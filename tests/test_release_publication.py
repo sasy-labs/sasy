@@ -150,3 +150,32 @@ esac
             "digest=" + INDEX.split("@")[1],
             "amd64=" + EXPECTED["amd64"], "arm64=" + EXPECTED["arm64"],
         ]
+
+
+@pytest.mark.parametrize('image, endpoint', [
+    ('ghcr.io/sasy-labs/sasy', 'orgs/sasy-labs/packages/container/sasy'),
+    ('ghcr.io/nilspalumbo/sasy-test', 'users/nilspalumbo/packages/container/sasy-test'),
+])
+@pytest.mark.parametrize('visibility', ['private', 'public'])
+def test_rehearsal_checks_the_selected_package(monkeypatch, image, endpoint, visibility):
+    import io
+    import runpy
+    import sys
+    import urllib.request
+
+    calls = []
+
+    def open_package(request, **kwargs):
+        calls.append(request.full_url)
+        return io.StringIO(json.dumps({'visibility': visibility}))
+
+    monkeypatch.setenv('IMAGE', image)
+    monkeypatch.setenv('GH_TOKEN', 'synthetic-test-token')
+    monkeypatch.setattr(sys, 'argv', ['check_rehearsal_registry.py'])
+    monkeypatch.setattr(urllib.request, 'urlopen', open_package)
+    if visibility == 'private':
+        runpy.run_path(str(ROOT / 'scripts/check_rehearsal_registry.py'))
+    else:
+        with pytest.raises(SystemExit, match='nonprivate package'):
+            runpy.run_path(str(ROOT / 'scripts/check_rehearsal_registry.py'))
+    assert calls == ['https://api.github.com/' + endpoint]
