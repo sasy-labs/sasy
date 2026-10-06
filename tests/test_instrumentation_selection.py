@@ -131,6 +131,12 @@ def frameworks(monkeypatch, hidden):
     # and the Langroid modules the Langroid adapter loads, whether or not the
     # frameworks are really installed here.
     fake_entry_points(monkeypatch)
+    # These selection tests exercise frameworks already imported at startup.
+    # Deferred imports are covered separately in fresh interpreter processes.
+    for modules in MODULES.values():
+        for name in modules:
+            monkeypatch.setitem(sys.modules, name, ModuleType(name))
+    monkeypatch.setattr(instrumentation, "_deferred", {})
     for name in instrumentation._LANGROID_MODULES:
         if name not in sys.modules or not getattr(sys.modules[name], "sasy_test_fake", False):
             monkeypatch.setitem(sys.modules, name, ModuleType(name))

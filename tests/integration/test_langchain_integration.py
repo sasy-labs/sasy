@@ -35,14 +35,17 @@ def run_program(engine, program, *, live=False):
     assert result.returncode == 0, output
 
 
+@pytest.mark.parametrize("deferred", [False, True])
 @pytest.mark.parametrize("asynchronous", [False, True])
-def test_real_framework_information_flow_and_stored_graph(engine, asynchronous):
+def test_real_framework_information_flow_and_stored_graph(engine, asynchronous, deferred):
     run_program(engine, r'''
 import asyncio
 import os
 import sys
 from pathlib import Path
 import sasy
+if DEFERRED:
+    sasy.instrument()
 from langchain_core.messages import ToolMessage
 from sasy.observability import api
 sys.path.insert(0, os.environ["SASY_LANGCHAIN_EXAMPLE"])
@@ -75,7 +78,7 @@ for confidential, destination, allowed in [(False, "external", True), (True, "ex
         assert ("read_confidential" if confidential else "read_public") in sources, sources
         assert len(graph.nodes) >= 7
 print("LangChain real engine cases and transitive graph passed")
-'''.replace("ASYNC", repr(asynchronous)))
+'''.replace("ASYNC", repr(asynchronous)).replace("DEFERRED", repr(deferred)))
 
 POLICY = """
 CurrentDependsPolicyRelevant() :- IsTool(_, "publish").

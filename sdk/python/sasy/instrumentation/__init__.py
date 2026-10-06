@@ -28,6 +28,8 @@ from collections.abc import Callable, Collection
 from importlib.metadata import PackageNotFoundError, version
 from typing import Any
 
+from wrapt import register_post_import_hook
+
 from sasy.capture import capture_logger
 from sasy.reference_monitor import check_tool_call
 
@@ -391,6 +393,84 @@ def _langroid_adapter() -> tuple[Callable[[], None], Callable[[], None]]:
     return (lambda: None), instrument_langroid
 
 
+
+# Watch concrete modules for LangGraph: its root is a namespace package, whose
+# loader does not execute code and therefore cannot fire a post-import hook.
+_IMPORT_TARGETS = {
+    "adk": ("google.adk", "sasy.instrumentation.adk"),
+    "langchain": ("langchain", "langgraph.prebuilt", "langgraph.pregel", "langgraph.graph",
+                  "sasy.instrumentation.langchain"),
+    "langroid": ("langroid",),
+}
+_deferred: dict[str, Callable[[types.ModuleType], None]] = {}
+_deferred_lock = threading.RLock()
+_loading = threading.local()
+
+
+def _already_imported(flag_name: str) -> bool:
+    roots = _FRAMEWORKS[flag_name][0]
+    return any(
+        module is not None and any(name == root or name.startswith(root + ".") for root in roots)
+        for name, module in tuple(sys.modules.items())
+    )
+
+
+def _defer_adapter(flag_name: str, load: Callable[[], tuple[Callable[[], None], Callable[[], None]]]) -> None:
+    """Register once without importing the optional framework or its adapter.
+
+    Framework imports synchronize through Python's import machinery. Do not
+    hold our registration lock while loading an adapter: its imports may fire
+    another target's callback or involve another importing thread.
+    """
+    registration_thread = threading.get_ident()
+    with _deferred_lock:
+        if flag_name in _deferred:
+            return
+
+        def activate(module: types.ModuleType) -> None:
+            with _deferred_lock:
+                if _deferred.get(flag_name) is not activate:
+                    return
+                if threading.get_ident() != registration_thread:
+                    raise RuntimeError(
+                        f"Deferred {flag_name} imports must run on the instrumentation startup thread; "
+                        f"call sasy.instrument({flag_name}=True) before starting worker threads"
+                    )
+            # Importing a SASY adapter directly may itself import the framework.
+            # Let the adapter's own completion hook perform installation.
+            adapter_name = f"sasy.instrumentation.{flag_name}"
+            adapter_module = sys.modules.get(adapter_name)
+            spec = getattr(adapter_module, "__spec__", None)
+            if module.__name__ != adapter_name and getattr(spec, "_initializing", False):
+                return
+            # Both public graph packages import Pregel before exporting the
+            # classes our factory needs. Wait for their enclosing import hook.
+            if flag_name == "langchain":
+                for parent, export in (("langgraph.prebuilt", "ToolNode"),
+                                       ("langgraph.graph", "StateGraph")):
+                    pending = sys.modules.get(parent)
+                    if (module.__name__ != parent and pending is not None
+                            and not hasattr(pending, export)):
+                        return
+            active: set[str] = getattr(_loading, "active", set())
+            if flag_name in active:
+                return
+            _loading.active = active | {flag_name}
+            try:
+                install = _adapter(flag_name, None, load)
+                if install is not None:
+                    install()
+            finally:
+                _loading.active = active
+            with _deferred_lock:
+                if _deferred.get(flag_name) is activate:
+                    del _deferred[flag_name]
+
+        _deferred[flag_name] = activate
+    for module_name in _IMPORT_TARGETS[flag_name]:
+        register_post_import_hook(activate, module_name)
+
+
 def instrument(
     http: bool = False,
     langroid: bool | None = None,
@@ -398,8 +478,15 @@ def instrument(
     adk: bool | None = None,
     langchain: bool | None = None,
 ) -> None:
-    """Install SASY's process-wide patches. Call once at start-up, after
+    """Register SASY's process-wide hooks. Call once at start-up, after
     :func:`configure`.
+
+    With ``None``, unimported frameworks and their adapters stay unloaded until
+    a framework import fires its hook. Already-imported frameworks are installed
+    immediately. ``True`` validates and installs immediately; ``False`` also
+    cancels pending installation. Deferred imports must run on this calling
+    thread; use ``True`` at startup before importing frameworks in workers.
+    Installed patches cannot be removed.
 
     Each framework flag takes ``None`` (the default: enable the adapter if the
     framework is installed, and do nothing if it is not), ``True`` (require
@@ -447,34 +534,33 @@ def instrument(
 
     The patches cannot be removed. Calling this again is harmless.
     """
-    # False also silences the first-use warning of an earlier auto-mode call.
-    _warned.update(flag_name for flag_name, flag in (("adk", adk), ("langchain", langchain),
-                                                     ("langroid", langroid)) if flag is False)
-    selected = [
-        (flag_name, flag, load)
-        for flag_name, flag, load in (
-            ("adk", adk, _adk_adapter),
-            ("langchain", langchain, _langchain_adapter),
-            ("langroid", langroid, _langroid_adapter),
-        )
-        if _selected(flag_name, flag)
-    ]
-    # Every adapter is loaded and checked before any patch is installed. A
-    # plain loop, not a comprehension: on Python 3.11 a comprehension is a
-    # frame of its own, which would shift _skip's stacklevel.
+    # False also cancels pending installation, but cannot undo installed hooks.
+    flags = (("adk", adk, _adk_adapter), ("langchain", langchain, _langchain_adapter),
+             ("langroid", langroid, _langroid_adapter))
+    _warned.update(name for name, flag, _ in flags if flag is False)
+    with _deferred_lock:
+        for name, flag, _ in flags:
+            if flag is False:
+                _deferred.pop(name, None)
+    selected = [(name, flag, load) for name, flag, load in flags if _selected(name, flag)]
+    eager = [(name, flag, load) for name, flag, load in selected
+             if flag is True or _already_imported(name)]
+    # Cancel deferred callbacks before loading an eager adapter: its imports
+    # must not recursively try to load that same, partially initialized adapter.
+    with _deferred_lock:
+        for name, _, _ in eager:
+            _deferred.pop(name, None)
+    # Preserve validation before any immediate patch, including HTTP hooks.
     adapters: dict[str, Callable[[], None] | None] = {}
-    for flag_name, flag, load in selected:
-        adapters[flag_name] = _adapter(flag_name, flag, load)
-
-    installs = [
-        adapters.get("adk"),
-        adapters.get("langchain"),
-        _instrument_http if http else None,
-        adapters.get("langroid"),
-    ]
-    for install in installs:
+    for name, flag, load in eager:
+        adapters[name] = _adapter(name, flag, load)
+    for install in (adapters.get("adk"), adapters.get("langchain"),
+                    _instrument_http if http else None, adapters.get("langroid")):
         if install is not None:
             install()
+    for name, flag, load in selected:
+        if name not in adapters:
+            _defer_adapter(name, load)
 
 
 __all__ = [
