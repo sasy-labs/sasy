@@ -1,5 +1,5 @@
 <p align="center">
-<a href="https://docs.sasy.ai/">
+<a href="https://sasy.ai/">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs-site/public/assets/sasy-wordmark-dark.svg">
     <img src="docs-site/public/assets/sasy-wordmark-light.svg" alt="SASY — Seamless Agent Security" width="340">
@@ -13,6 +13,12 @@
   <a href="https://www.npmjs.com/package/sasy-js"><img src="https://img.shields.io/npm/v/sasy-js?cacheSeconds=300" alt="npm version"></a>
   <a href="https://github.com/sasy-labs/sasy/actions/workflows/ci.yml"><img src="https://github.com/sasy-labs/sasy/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI"></a>
   <a href="https://arxiv.org/abs/2602.16708"><img src="https://img.shields.io/badge/arXiv-2602.16708-b31b1b" alt="Paper"></a>
+</p>
+
+<p align="center">
+  <a href="https://docs.sasy.ai/"><b>Docs</b></a> ·
+  <a href="https://blog.sasy.ai/"><b>Blog</b></a> ·
+  <a href="https://sasy.ai/"><b>Website</b></a>
 </p>
 
 SASY enforces policies on what AI agents do. You write rules as a Datalog policy;
