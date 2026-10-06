@@ -465,6 +465,22 @@ impl IpcChild {
         self.read_reply(id).await
     }
 
+    /// Stop a failed evaluator and refuse future IPC, retaining the OS handle
+    /// so the manager can await reaping instead of relying on drop cleanup.
+    pub(crate) fn stop_unusable(&mut self) {
+        self.poisoned = true;
+        #[cfg(unix)]
+        if let Some(pid) = self.child.id() {
+            // SAFETY: this child has not been reaped; its PID names its group.
+            unsafe {
+                libc::kill(-(pid as i32), libc::SIGKILL);
+            }
+        }
+        // The group signal also reaches sandbox descendants; start_kill
+        // handles the direct child on platforms without process groups.
+        let _ = self.child.start_kill();
+    }
+
     /// Refuse to use a channel that lost frame sync. See `poisoned`.
     fn check_not_poisoned(&self) -> Result<(), EvaluatorError> {
         if self.poisoned {

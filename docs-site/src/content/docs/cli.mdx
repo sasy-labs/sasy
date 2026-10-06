@@ -103,4 +103,6 @@ See [configuration](/configuration/) for startup examples, [authentication](/aut
 
 The raw proxy has a separate, limited HTTP contract described in [configuration](/configuration/#raw-forward-proxy). It does not inherit per-request gRPC authentication.
 
+An evaluator IPC failure immediately signals its process group and makes that channel unusable: later calls fail closed without another exchange. The engine retains the subprocess handle for cleanup, so a concurrent kill can await reaping even when the in-flight call discovers the failure first. Signalling the process group does not wait for the IPC mutex; awaiting the reap does.
+
 Other full-engine commands are `sasy init-credentials [--credentials-db FILE] [--env-file FILE]` to initialize/seed SQLite credentials, and `sasy install-assets DIR` to materialize the six embedded compile-chain assets. `init-credentials` defaults to `data/graph/credentials.db`, the file `serve` uses with its default `--data-dir`; see [building](/building/) before selecting an asset override. `install-assets` requires a compiler-enabled build.

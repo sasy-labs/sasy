@@ -220,9 +220,12 @@ impl EvaluatorProcess {
                 Ok(resp)
             }
             Err(EvaluatorError::ProcessDied) => {
-                error!("Evaluator process died, clearing handle");
+                error!("Evaluator IPC failed, retaining child handle for reaping");
                 self.outstanding_id.store(0, Ordering::Relaxed);
-                *guard = None;
+                // Dropping here delegates reaping to Tokio's background
+                // reaper. A concurrent kill would then see no handle and
+                // return before the child has actually been reaped.
+                child.stop_unusable();
                 Err(EvaluatorError::ProcessDied)
             }
             Err(e) => {
@@ -363,8 +366,11 @@ impl Evaluator for EvaluatorProcess {
                 describe_unexpected(&other)
             ))),
             Err(EvaluatorError::ProcessDied) => {
-                error!("Evaluator process died, clearing handle");
-                *guard = None;
+                error!("Evaluator IPC failed, retaining child handle for reaping");
+                // Dropping here delegates reaping to Tokio's background
+                // reaper. A concurrent kill would then see no handle and
+                // return before the child has actually been reaped.
+                child.stop_unusable();
                 Err(EvaluatorError::ProcessDied)
             }
             Err(e) => Err(e),
@@ -577,8 +583,15 @@ while True:
                 }])
                 .await;
         });
-        // Long enough for that call to be inside the mutex and waiting.
-        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        // The request mark is set with the child mutex held. Wait for that
+        // state rather than assuming the task ran during a fixed sleep.
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while evaluator.outstanding_request().is_none() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("the holder must enter the IPC call");
         assert!(
             !holding.is_finished(),
             "the holder was expected to be stuck"
@@ -602,6 +615,84 @@ while True:
         );
 
         let _ = holding.await;
+    }
+
+    /// A lost IPC channel must remain unusable, but its OS handle is still
+    /// needed so kill can reap synchronously instead of relying on Tokio's
+    /// background reaper after dropping the Child.
+    #[cfg(unix)]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_failed_ipc_retains_the_child_until_kill_reaps_it() {
+        for query in [false, true] {
+            let evaluator = EvaluatorProcess::new(EvaluatorProcessConfig {
+                program: "/usr/bin/python3".into(),
+                args: vec![
+                    "-c".into(),
+                    r#"
+import struct, sys, time
+length = struct.unpack('>I', sys.stdin.buffer.read(4))[0]
+ident = sys.stdin.buffer.read(8)
+sys.stdin.buffer.read(length)
+sys.stdout.buffer.write(struct.pack('>I', 0xffffffff) + ident)
+sys.stdout.buffer.flush()
+time.sleep(600)
+"#
+                    .into(),
+                ],
+                backend: "broken-ipc".into(),
+                env: Vec::new(),
+            })
+            .expect("spawn the malformed-frame evaluator");
+            let pid = evaluator.child_pid();
+            let result = tokio::time::timeout(Duration::from_secs(5), async {
+                if query {
+                    evaluator
+                        .query(EvalAuthRequest {
+                            current_node_ids: vec![],
+                            actions: vec![],
+                            entity: None,
+                            roles: vec![],
+                            tenant_id: Some("synthetic".into()),
+                            session_id: None,
+                            principal: None,
+                            action_metadata: vec![],
+                        })
+                        .await
+                        .map(|_| ())
+                } else {
+                    evaluator.reset().await
+                }
+            })
+            .await
+            .expect("the malformed frame must fail promptly");
+            assert!(matches!(result, Err(EvaluatorError::ProcessDied)));
+            assert!(
+                evaluator.child.lock().await.is_some(),
+                "IPC failure dropped the handle before kill could reap it"
+            );
+            assert!(
+                crate::evaluator::reaper::is_registered(pid),
+                "the unreaped child must stay on the shutdown list"
+            );
+            assert!(
+                crate::evaluator::reaper::group_is_empty(pid),
+                "fatal IPC must stop the child without waiting for another dispatch"
+            );
+            let retry = tokio::time::timeout(Duration::from_secs(5), evaluator.reset())
+                .await
+                .expect("later calls must fail without another IPC exchange");
+            assert!(matches!(retry, Err(EvaluatorError::ProcessDied)));
+            tokio::time::timeout(Duration::from_secs(5), evaluator.kill())
+                .await
+                .expect("kill must reap the retained child");
+            // SAFETY: signal zero checks whether the child PID still exists.
+            assert_ne!(
+                unsafe { libc::kill(pid as i32, 0) },
+                0,
+                "the broken evaluator was not reaped"
+            );
+            assert!(!crate::evaluator::reaper::is_registered(pid));
+        }
     }
 
     /// A live evaluator that nobody holds a handle to any more must not keep
