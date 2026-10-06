@@ -1,6 +1,6 @@
 {
   "name": "sasy-js",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "Policy enforcement for LLM agent tool calls, decided from each call's message ancestry",
   "keywords": [
     "llm",

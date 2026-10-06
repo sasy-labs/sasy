@@ -3,7 +3,7 @@ SASY_ADDR ?= 127.0.0.1:10089
 SASY_RELEASE_TARGET_DIR ?= target/full-release
 SASY_IMAGE ?= sasy
 # Prebuilt release image; override with another release tag or digest as needed.
-SASY_GHCR_IMAGE ?= ghcr.io/sasy-labs/sasy:0.5.0
+SASY_GHCR_IMAGE ?= ghcr.io/sasy-labs/sasy:0.5.1
 SASY_DOCKER_PORT ?= 10089
 SASY_SETUP_URL ?= $(SASY_ADDR)
 export SASY_BIN SASY_ADDR FILE

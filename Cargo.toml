@@ -16,7 +16,7 @@ members = [
     "crates/sasy-loadgen",
 ]
 [workspace.package]
-version = "0.5.0"
+version = "0.5.1"
 edition = "2021"
 # The copyright holder named in NOTICE, not a person. These are the fields a
 # published crate advertises; the crates inherit them with
@@ -94,27 +94,27 @@ libloading = "0.8"
 fnv = "1.0"
 
 # Workspace crates
-sasy-common = { path = "crates/sasy-common", version = "0.5.0" }
-sasy-redaction = { path = "crates/sasy-redaction", version = "0.5.0" }
+sasy-common = { path = "crates/sasy-common", version = "0.5.1" }
+sasy-redaction = { path = "crates/sasy-redaction", version = "0.5.1" }
 # default-features=false lets the restricted binary drop the neo4j-sync feature
 # (reqwest). The full sasy-binary build re-enables it via llm-oracle.
-sasy-graph = { path = "crates/sasy-graph", version = "0.5.0", default-features = false }
+sasy-graph = { path = "crates/sasy-graph", version = "0.5.1", default-features = false }
 # default-features=false lets the restricted binary drop the non-passthrough
 # auth providers (jsonwebtoken, reqwest, x509-parser). Full build re-enables via
 # llm-oracle. MUST live here: Cargo ignores default-features on workspace=true.
-sasy-auth = { path = "crates/sasy-auth", version = "0.5.0", default-features = false }
-sasy-credential = { path = "crates/sasy-credential", version = "0.5.0" }
-sasy-server = { path = "crates/sasy-server", version = "0.5.0" }
+sasy-auth = { path = "crates/sasy-auth", version = "0.5.1", default-features = false }
+sasy-credential = { path = "crates/sasy-credential", version = "0.5.1" }
+sasy-server = { path = "crates/sasy-server", version = "0.5.1" }
 # default-features=false lets the restricted binary drop sasy-refmon's `proxy`
 # feature (forward proxy + gRPC ProxyHTTP + credential injection → hyper,
 # reqwest, sasy-credential). The full sasy-binary build re-enables it via
 # llm-oracle. MUST live here: Cargo ignores default-features on a
 # `workspace = true` use-site.
-sasy-refmon = { path = "crates/sasy-refmon", version = "0.5.0", default-features = false }
-sasy-policy-analysis = { path = "crates/sasy-policy-analysis", version = "0.5.0" }
+sasy-refmon = { path = "crates/sasy-refmon", version = "0.5.1", default-features = false }
+sasy-policy-analysis = { path = "crates/sasy-policy-analysis", version = "0.5.1" }
 # default-features = false strips sasy-policy's `compiler` feature graph-wide;
 # the full sasy-binary build re-enables it via llm-oracle, so the restricted
 # build (which omits llm-oracle) actually drops the toolchain. MUST live here:
 # Cargo ignores default-features on a `workspace = true` use-site.
-sasy-policy = { path = "crates/sasy-policy", version = "0.5.0", default-features = false }
-policy-sdk = { path = "crates/policy-sdk", package = "sasy-policy-sdk", version = "0.5.0" }
+sasy-policy = { path = "crates/sasy-policy", version = "0.5.1", default-features = false }
+policy-sdk = { path = "crates/policy-sdk", package = "sasy-policy-sdk", version = "0.5.1" }

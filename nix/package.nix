@@ -11,7 +11,7 @@ let
   };
   assets = pkgs.stdenv.mkDerivation {
     pname = "sasy-souffle-assets";
-    version = "0.5.0";
+    version = "0.5.1";
     src = lib.fileset.toSource {
       inherit root;
       fileset = lib.fileset.unions (map (path: root + "/${path}")
@@ -57,7 +57,7 @@ let
   '';
 in pkgs.rustPlatform.buildRustPackage {
   pname = "sasy";
-  version = "0.5.0";
+  version = "0.5.1";
   inherit src;
   cargoLock.lockFile = ../Cargo.lock;
   cargoBuildFlags = [ "--locked" "--package" "sasy-binary" "--bin" "sasy" ];

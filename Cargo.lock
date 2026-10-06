@@ -2524,7 +2524,7 @@ checksum = "9774ba4a74de5f7b1c1451ed6cd5285a32eddb5cccb8cc655a4e50009e06477f"
 
 [[package]]
 name = "sasy-auth"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "anyhow",
  "jsonwebtoken",
@@ -2548,7 +2548,7 @@ dependencies = [
 
 [[package]]
 name = "sasy-binary"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "anyhow",
  "clap",
@@ -2576,7 +2576,7 @@ dependencies = [
 
 [[package]]
 name = "sasy-common"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "prost",
  "prost-types",
@@ -2588,7 +2588,7 @@ dependencies = [
 
 [[package]]
 name = "sasy-credential"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "http-body-util",
  "hyper",
@@ -2611,7 +2611,7 @@ dependencies = [
 
 [[package]]
 name = "sasy-graph"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "anyhow",
  "parking_lot",
@@ -2632,7 +2632,7 @@ dependencies = [
 
 [[package]]
 name = "sasy-loadgen"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "anyhow",
  "clap",
@@ -2649,7 +2649,7 @@ dependencies = [
 
 [[package]]
 name = "sasy-policy"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "anyhow",
  "async-channel",
@@ -2681,7 +2681,7 @@ dependencies = [
 
 [[package]]
 name = "sasy-policy-analysis"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -2691,7 +2691,7 @@ dependencies = [
 
 [[package]]
 name = "sasy-policy-plugin"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "anyhow",
  "prost",
@@ -2705,7 +2705,7 @@ dependencies = [
 
 [[package]]
 name = "sasy-policy-sdk"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "anyhow",
  "libloading",
@@ -2719,7 +2719,7 @@ dependencies = [
 
 [[package]]
 name = "sasy-redaction"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "regex",
  "sasy-common",
@@ -2729,7 +2729,7 @@ dependencies = [
 
 [[package]]
 name = "sasy-refmon"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "anyhow",
  "bytes",
@@ -2758,7 +2758,7 @@ dependencies = [
 
 [[package]]
 name = "sasy-server"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "anyhow",
  "clap",
