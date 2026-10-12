@@ -188,7 +188,9 @@ requests and releases.
 
 SASY includes a Rust engine and Python and TypeScript SDKs.
 
-[See the paper](https://arxiv.org/abs/2602.16708).
+See the [paper](https://arxiv.org/abs/2602.16708) and the
+[evaluation repository](https://github.com/sasy-labs/forge) for evaluations,
+results, and additional examples.
 
 - [Documentation](https://docs.sasy.ai/), [local engine setup](https://docs.sasy.ai/local-engine/),
   and [building from source](https://docs.sasy.ai/building/).
@@ -210,8 +212,8 @@ If you find this work useful in your own research, please consider citing the fo
 
 ```bibtex
 @misc{palumbo2026formalpolicyenforcementrealworld,
-  title={Formal Policy Enforcement for Real-World Agentic Systems},
-  author={Nils Palumbo and Sarthak Choudhary and Jihye Choi and Guy Amir and Prasad Chalasani and Somesh Jha},
+  title={Formal Policy Enforcement for Agentic Systems},
+  author={Nils Palumbo and Sarthak Choudhary and Jihye Choi and Guy Amir and Prasad Chalasani and Isil Dillig and Somesh Jha},
   year={2026},
   eprint={2602.16708},
   archivePrefix={arXiv},
