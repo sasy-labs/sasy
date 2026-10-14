@@ -22,7 +22,13 @@ export default defineConfig({
       { label: 'Concepts', slug: 'concepts' },
     ] },
     { label: 'Write policies', items: [
-      { label: 'Policy language', slug: 'policy-language' },
+      { label: 'Start writing policies', slug: 'policy-language' },
+      { label: 'Core relations', slug: 'policies/core-relations' },
+      { label: 'Built-ins and feedback', slug: 'policies/reference' },
+      { label: 'Extension points', slug: 'policies/extensions' },
+      { label: 'Cookbook', slug: 'policies/cookbook' },
+      { label: 'Validation and debugging', slug: 'policies/validation' },
+      { label: 'Dependency relevance', slug: 'policies/relevance' },
     ] },
     { label: 'Integrate a framework', items: [
       { label: 'Use the SDK directly', slug: 'quickstart' },

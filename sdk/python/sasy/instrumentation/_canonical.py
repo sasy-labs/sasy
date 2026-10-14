@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import json
 from base64 import b64encode
+from collections import OrderedDict
 from collections.abc import Callable
 from enum import Enum
 from typing import Any, NamedTuple
@@ -50,8 +51,8 @@ def encoder(error: type[Exception], fallback: Callable[[Any], Any] | None = None
     """The canonical encoding, refusing what it cannot write down with *error*.
 
     The encoding is injective over the types it covers: JSON's own types, bytes,
-    bytearray, tuple, set, frozenset, and — under a fallback — enum members. Two
-    different values of those types never share one encoding.
+    bytearray, tuple, set, frozenset, OrderedDict, and — under a fallback — enum
+    members. Two different values of those types never share one encoding.
 
     An adapter that records values it does not choose — an ADK tool's arguments
     and its return are arbitrary Python — gives a *fallback*: a rendering of a
@@ -79,8 +80,9 @@ def encoder(error: type[Exception], fallback: Callable[[Any], Any] | None = None
         :func:`canonical` safe: every key of an encoded dict starts with one of
         those prefixes — ``s:``, ``bool:``, ``i:``, ``b:``, ``n:``, ``o:`` — and
         no wrapper name does: ``bytes``, ``bytearray``, ``tuple``, ``set``,
-        ``frozenset``, ``surrogates`` and ``py:<module>:<qualname>`` all start
-        with something else. So no dict can be written to look like a wrapper.
+        ``frozenset``, ``ordered_dict``, ``surrogates`` and
+        ``py:<module>:<qualname>`` all start with something else. So no dict can
+        be written to look like a wrapper.
 
         A key of a type the encoding does not cover reaches ``canonical`` under
         the ``o:`` prefix and is handled there like any other value: written
@@ -178,6 +180,12 @@ def encoder(error: type[Exception], fallback: Callable[[Any], Any] | None = None
             return {name: sorted((canonical(item) for item in value), key=_json)}
         if type(value) is dict:
             return {canonical_key(key): canonical(item) for key, item in value.items()}
+        if type(value) is OrderedDict:
+            # Pydantic 2.14 preserves this type in Python dumps. Its order is
+            # part of the value, so use a sequence of entries: sorting a JSON
+            # object would erase edits that reorder the entries. The wrapper
+            # also keeps it apart from a plain dict with the same contents.
+            return {"ordered_dict": [[canonical_key(key), canonical(item)] for key, item in value.items()]}
         if fallback is not None:
             # The type's module and qualified name name the wrapper, so two
             # differently named types cannot share one record even when they
@@ -206,7 +214,7 @@ def encoder(error: type[Exception], fallback: Callable[[Any], Any] | None = None
             return {f"py:{type(value).__module__}:{type(value).__qualname__}": canonical(rendered)}
         raise error(
             f"A message holds a {type(value).__name__}, which this adapter cannot record "
-            "faithfully: it records JSON data, bytes, tuples and sets, and writing anything "
+            "faithfully: it records JSON data, bytes, tuples, sets and OrderedDict, and writing anything "
             "else as one of those would let two different messages share one record and one "
             "mark. Convert the value before the message is recorded.")
 

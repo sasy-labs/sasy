@@ -1753,7 +1753,6 @@ class _Tuple(tuple):
 @pytest.mark.parametrize("subclass,plain", [
     (_List([1]), [1]),
     (_Tuple((1,)), (1,)),
-    (collections.OrderedDict(a=1), {"a": 1}),
 ])
 def test_a_container_subclass_is_recorded_as_the_plain_container_it_dumps_to(
         boundary, subclass, plain):
@@ -1767,6 +1766,25 @@ def test_a_container_subclass_is_recorded_as_the_plain_container_it_dumps_to(
     first.additional_kwargs, second.additional_kwargs = {"k": subclass}, {"k": plain}
     assert type(first.model_dump()["additional_kwargs"]["k"]) is type(plain)
     assert run._event(first, "a").metadata == run._event(second, "a").metadata
+
+
+def test_an_ordered_dict_is_recorded_with_the_type_and_order_the_dump_preserves(boundary):
+    """Both Pydantic's older normalization and its 2.14 preservation are supported."""
+    run = adapter._Run("test-session")
+    ordered, reordered, plain = [AIMessage("x", id="a") for _ in range(3)]
+    ordered.additional_kwargs = {"k": collections.OrderedDict(a=1, b=2)}
+    reordered.additional_kwargs = {"k": collections.OrderedDict(b=2, a=1)}
+    plain.additional_kwargs = {"k": {"a": 1, "b": 2}}
+    records = [run._event(message, "a").metadata for message in (ordered, reordered, plain)]
+    dumped = ordered.model_dump()["additional_kwargs"]["k"]
+    if type(dumped) is collections.OrderedDict:
+        assert len(set(records)) == 3
+        assert json.loads(records[0])["s:additional_kwargs"]["s:k"] == {
+            "ordered_dict": [["s:a", 1], ["s:b", 2]],
+        }
+    else:
+        assert type(dumped) is dict
+        assert records[0] == records[1] == records[2]
 
 
 def _hashable(value):

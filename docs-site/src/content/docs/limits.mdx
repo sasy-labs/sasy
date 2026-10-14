@@ -53,13 +53,26 @@ prompt, do not change the agent's own tool result or its own model requests.
 
 ## Policy analysis and diagnostics
 
-Policies are preprocessed by a Python script (`sugar.py`) when they are loaded, so the engine's host needs Python. The static analyzer parses the built-in functor syntax but reports an explicit "unsupported" result for a policy that uses functors, instead of analysing it.
+Policies are preprocessed by a Python script (`sugar.py`) when loaded, so the
+engine's host needs Python. Static analysis models user `@functor` calls
+symbolically without executing them; some Soufflé built-in expressions remain
+explicitly unsupported. See [validation and debugging](/policies/validation/)
+for reports, behavioral checks, and denial traces.
 
-When an action is denied because no allow rule matched, the denial trace lists each allow rule with a status in `allow_routes`. `blocked` means the rule's fixed conditions on this request cannot all hold at once — for example it names a different tool. `possible` means nothing in the request rules it out; it is a hint, not a promise that changing anything will make the rule match. `unknown` means the analysis could not decide, which is what happens with unsupported syntax or when the analysis runs out of its budget. Any suggestions shown come from the policy author's annotations. The analysis works from the request's fixed conditions only: it does not call functors again and does not evaluate rules that depend on ancestry. Relation names beginning with `SasyAllow` are reserved for the relations this analysis generates.
+Allow-route diagnostics use fixed request conditions. They do not rerun functors
+or evaluate ancestry, and a `possible` route is not a promise that a suggested
+edit makes a rule match. Generated diagnostics reserve relation names beginning
+with `SasyAllow`.
 
-The engine tries to work out by itself which actions need ancestry, and skips the graph walk for the rest. The analysis is conservative: where it cannot tell, it walks the graph. It never overrides a `CurrentDependsPolicyRelevant()` or `ReachableFromPolicyRelevant()` rule you wrote, and writing one yourself is never less precise and is often faster. See [policy language](/policy-language/).
+Automatic [dependency relevance](/policies/relevance/) inference is conservative:
+when it cannot narrow traversal, it may do more work. It preserves authored gate
+rules. An explicit gate changes which ancestry facts a policy can observe, so
+compare its decisions with an always-enabled baseline before relying on it.
 
-Runtime deadlines also cover generated diagnostic work. Compiled/interpreted parity tests and policy fixtures exercise selected cases; they are not a proof for arbitrary policies. See [policy language](/policy-language/) for rule semantics and [configuration](/configuration/) for evaluation deadlines.
+Runtime deadlines also cover generated diagnostic work. Compiled/interpreted
+parity tests and policy fixtures exercise selected cases; they are not a proof
+for arbitrary policies. See [core relations](/policies/core-relations/) for rule
+semantics and [configuration](/configuration/) for evaluation deadlines.
 
 ## Distribution scope
 

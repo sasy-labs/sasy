@@ -230,8 +230,8 @@ different agents may reuse an ID.
 
 The adapter records message content for policies and a canonical snapshot in
 metadata so the engine can detect changes to the source message. See
-[record encoding](/reference/google-adk-records/) for the field representation,
-supported value types, and version-comparison rules.
+[records for policies](/reference/google-adk-records/) for field paths, query
+examples, and representation limits.
 
 ### Child agents and tasks
 

@@ -376,6 +376,44 @@ print("LangChain records keep apart what a JSON dump would merge")
 '''.replace("POLICY", repr(POLICY)))
 
 
+def test_ordered_dict_edits_are_visible_to_the_real_engine(engine):
+    """A preserved order or type change must invalidate a carried message mark."""
+    run_program(engine, SCRIPTED + r'''
+from collections import OrderedDict
+
+def reorder(message):
+    message.additional_kwargs["ordered"].move_to_end("a")
+def plain_dict(message):
+    message.additional_kwargs["ordered"] = dict(message.additional_kwargs["ordered"])
+def change_value(message):
+    message.additional_kwargs["ordered"]["a"] = 3
+
+probe = AIMessage("x", additional_kwargs={"ordered": OrderedDict(a=1, b=2)})
+preserved = type(probe.model_dump()["additional_kwargs"]["ordered"]) is OrderedDict
+for edit, expected in [(None, "error"),
+                       (reorder, "success" if preserved else "error"),
+                       (plain_dict, "success" if preserved else "error"),
+                       (change_value, "success")]:
+    published.clear()
+    with sasy.session(policy=POLICY):
+        figure = AIMessage("the figure", id="ordered-answer",
+                           additional_kwargs={"ordered": OrderedDict(a=1, b=2)})
+        first = create_agent(steps(call("read_confidential", {}, "read-1"), figure), [read_confidential]).invoke(
+            {"messages": [HumanMessage("look it up")]})
+        answer = first["messages"][-1].model_copy(deep=True)
+        if edit is not None:
+            edit(answer)
+        second = create_agent(steps(call("publish", {"text": "the figure"}, "publish-1"), AIMessage("done")), [publish]).invoke(
+            {"messages": [answer, HumanMessage("publish it")]})
+        # This policy permits inputs of unknown origin. A changed snapshot
+        # loses its old confidential ancestry, so publication distinguishes
+        # an invalidated mark from an unchanged, still-confidential message.
+        assert publication(second) == expected, (edit, publication(second))
+        assert len(published) == int(expected == "success"), (edit, published)
+print("Ordered dictionary snapshots verified by the real engine")
+'''.replace("POLICY", repr(POLICY)))
+
+
 def test_live_langchain_provider_information_flow(engine):
     if os.environ.get("SASY_RUN_LIVE_FRAMEWORK_TESTS") != "1":
         pytest.skip("Set SASY_RUN_LIVE_FRAMEWORK_TESTS=1 for bounded paid provider integration")
