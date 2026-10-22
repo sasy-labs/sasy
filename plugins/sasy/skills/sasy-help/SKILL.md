@@ -28,6 +28,11 @@ request for each:
 | `read-policy` | Explains an existing policy | "Explain this SASY policy." |
 | `sasy-why-blocked` | Explains why SASY blocked an action | "Why did SASY block this tool call?" |
 
+SASY Guard, a separate project, enforces SASY policies on the coding agent on
+the user's machine (Claude Code, Codex or pi). Its skill is installed
+separately; `sasy-setup` does that when asked, for example: "Set up SASY Guard
+to enforce policies on my coding agent." Docs: https://guard.sasy.ai
+
 Do not invent other skills or describe them differently. To get started,
 suggest `sasy-setup`, then the skill for the user's framework, then
 `write-policy`. To see SASY work first, suggest `sasy-examples`.
