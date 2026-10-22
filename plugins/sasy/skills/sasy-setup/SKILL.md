@@ -1,10 +1,18 @@
 ---
 name: sasy-setup
-description: Install the SASY Python SDK, start a local SASY engine and confirm it enforces a policy. Use when the user asks to install, set up or start SASY, or when another SASY skill needs a running engine.
+description: Install the SASY Python SDK, start a local SASY engine and confirm it enforces a policy. Use when the user asks to install, set up or start SASY, or when another SASY skill needs a running engine. Also use when the user asks to install SASY Guard or to enforce policies on their coding agent (Claude Code, Codex or pi); this skill points to the SASY Guard skill for that.
 ---
 
-Set SASY up in the user's project so their agent code can use it. Do the steps;
-do not hand them to the user.
+**SASY Guard is a separate setup.** If the user wants policies enforced on the
+coding agent on their own machine (Claude Code, Codex or pi), rather than on an
+agent they are building, they want SASY Guard. Install its skill with
+`npx skills add -g -y sasy-labs/sasy-guard` (`-y` skips the confirmation
+prompt, which fails without a terminal), then read that skill's `SKILL.md`
+(the command prints where it installed it) and follow it instead of the steps
+below. Docs: https://guard.sasy.ai
+
+Otherwise, set SASY up in the user's project so their agent code can use it. Do
+the steps; do not hand them to the user.
 
 1. **Check prerequisites.** Check that Python 3.11 or newer is available and
    Docker or a compatible provider is installed and started: `docker info`
